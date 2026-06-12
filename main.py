@@ -172,10 +172,7 @@ async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /stop — остановить текущий анализ.
-    Кладёт специальный маркер STOP в очередь BA.
-    """
+    """/stop — остановить текущий анализ."""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
@@ -186,12 +183,13 @@ async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     for task_id, queue in ba_answer_queues.items():
         await queue.put("[STOP — пользователь остановил анализ]")
-        await message.reply_text(
-            f"🛑 Анализ задачи #{task_id} остановлен."
-        )
+        await message.reply_text(f"🛑 Анализ задачи #{task_id} остановлен.")
         logger.info(f"Анализ остановлен для задачи {task_id}")
         break
-    """Команда /status — показывает активные задачи"""
+
+
+async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/status — показывает активные задачи"""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
@@ -203,7 +201,8 @@ async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     tasks_list = "\n".join([f"  • #{tid}" for tid in ba_answer_queues.keys()])
     await message.reply_text(
         f"⚙️ Активные задачи:\n{tasks_list}\n\n"
-        f"Для пропуска вопросов BA: /skip"
+        f"/skip — пропустить вопрос BA\n"
+        f"/stop — остановить анализ"
     )
 
 
