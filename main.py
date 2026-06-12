@@ -239,7 +239,13 @@ def main() -> None:
 
     logger.info("Запуск @InformNBU_bot...")
 
-    app = Application.builder().token(TELEGRAM_TOKEN).build()
+    app = (
+        Application.builder()
+        .token(TELEGRAM_TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .build()
+    )
 
     # Команды в личке бота
     app.add_handler(CommandHandler("skip", handle_skip))
@@ -264,7 +270,10 @@ def main() -> None:
     ))
 
     logger.info("Бот запущен. Ожидаю сообщения...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,  # сбрасываем старые обновления при старте
+    )
 
 
 if __name__ == "__main__":
