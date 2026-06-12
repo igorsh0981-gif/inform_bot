@@ -98,3 +98,24 @@ class Task:
         if self.ba_answers:
             parts.append(f"Уточнения от PM: {chr(10).join(self.ba_answers)}")
         return "\n".join(parts)
+
+    def to_sheets_row(self) -> list:
+        """Строка для записи в Google Sheets (лист Inform, 16 колонок)"""
+        return [
+            self.task_id,
+            self.timestamp,
+            self.feature_name,
+            self.raw_message[:500],
+            self.summary,
+            self.author_username,
+            self.author_name,
+            str(self.chat_id),
+            self.chat_name,
+            self.chat_type,
+            str(self.has_attachment),
+            self.attachment_type or "—",
+            self.status,
+            "",  # release_agent_run_id
+            self.gdrive_feature_folder_url,
+            self.notion_page_url,
+        ]
