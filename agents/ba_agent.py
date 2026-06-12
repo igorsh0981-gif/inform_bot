@@ -128,6 +128,18 @@ async def run_ba(
                     answer_queue.get(),
                     timeout=ANSWER_TIMEOUT,
                 )
+                # Проверяем STOP
+                if "[STOP" in answer:
+                    logger.info("BA получил STOP — прерываем анализ")
+                    raise InterruptedError("Пользователь остановил анализ")
+
+                # Проверяем SKIP
+                if "[SKIP" in answer:
+                    logger.info(f"BA получил SKIP на итерации {attempt}")
+                    accumulated_answers.append(f"Ответ {attempt}: [ПРОПУЩЕНО]")
+                    task.ba_answers = accumulated_answers
+                    continue
+
                 accumulated_answers.append(f"Ответ {attempt}: {answer}")
                 task.ba_answers = accumulated_answers
                 logger.info(f"BA получил ответ на итерации {attempt}")
