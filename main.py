@@ -6,7 +6,7 @@
 import os
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 
 from telegram import Update
 from telegram.ext import (
@@ -90,7 +90,7 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
     # Сборка задачи
     task = Task(
         task_id=str(message.message_id),
-        timestamp=datetime.utcnow().isoformat(),
+        timestamp=datetime.now(timezone.utc).isoformat(),
         raw_message=raw_text,
         author_username=f"@{message.from_user.username}" if message.from_user.username else "",
         author_name=f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip(),
