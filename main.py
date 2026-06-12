@@ -169,7 +169,26 @@ async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         break
 
 
-async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /stop — остановить текущий анализ.
+    Кладёт специальный маркер STOP в очередь BA.
+    """
+    message = update.message
+    if not message or message.chat.id != BOT_CHAT_ID:
+        return
+
+    if not ba_answer_queues:
+        await message.reply_text("Нет активных задач для остановки.")
+        return
+
+    for task_id, queue in ba_answer_queues.items():
+        await queue.put("[STOP — пользователь остановил анализ]")
+        await message.reply_text(
+            f"🛑 Анализ задачи #{task_id} остановлен."
+        )
+        logger.info(f"Анализ остановлен для задачи {task_id}")
+        break
     """Команда /status — показывает активные задачи"""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
@@ -249,6 +268,7 @@ def main() -> None:
 
     # Команды в личке бота
     app.add_handler(CommandHandler("skip", handle_skip))
+    app.add_handler(CommandHandler("stop", handle_stop))
     app.add_handler(CommandHandler("status", handle_status))
 
     # Триггеры фич из групп
