@@ -108,33 +108,6 @@ And [дополнительный результат если есть]
 Если всё ясно — секцию ВОПРОСЫ не добавляй.
 """
 
-# ── Промпт ревьюера ───────────────────────────────────────────────────────────
-BA_REVIEWER_SYSTEM = """Ты — Lead BA и QA артефактов в банковском проекте.
-
-Проверь BA артефакт по чеклисту и верни ТОЛЬКО JSON:
-{
-  "score": 0-100,
-  "issues": ["issue1", "issue2"],
-  "missing_sections": ["section1"],
-  "improvements": ["конкретное улучшение 1", "конкретное улучшение 2"],
-  "approved": true/false
-}
-
-Критерии (каждый 0-10 баллов):
-1. Executive Summary — есть конкретные метрики эффекта?
-2. FR — минимум 8 требований с критериями приёмки?
-3. US — минимум 5 историй с Gherkin AC?
-4. Бизнес-правила — упомянуты регуляторные требования НБУ?
-5. Edge cases — описаны негативные сценарии?
-6. Нефункциональные требования — есть конкретные числа?
-7. Открытые вопросы — есть таблица?
-8. Полнота — нет разделов "будет уточнено" без обоснования?
-9. Конкретность — нет воды, каждое требование проверяемо?
-10. Банковская специфика — терминология НБУ, интеграции упомянуты?
-
-approved=true если score >= 75 И нет критических issues.
-"""
-
 
 def _extract_questions(text: str) -> list[dict]:
     """Извлекает все вопросы из секции ## ВОПРОСЫ:"""
@@ -226,20 +199,8 @@ async def _send_questions_block(
 
 
 async def _review_artifact(artifact: str, task: Task) -> dict:
-    """Запускает ревьюера артефакта. Возвращает результат проверки."""
-    try:
-        import json
-        review_text = (
-            f"## BA Артефакт для проверки:\n\n{artifact}\n\n"
-            f"## Контекст задачи:\n{task.feature_name} — {task.summary}"
-        )
-        raw = await call_claude(BA_REVIEWER_SYSTEM, review_text, max_tokens=1024, timeout=45)
-        # Убираем возможные markdown-обёртки
-        clean = re.sub(r"```(?:json)?|```", "", raw).strip()
-        return json.loads(clean)
-    except Exception as e:
-        logger.warning(f"BA ревью не удалось: {e}")
-        return {"score": 0, "approved": False, "issues": [str(e)], "improvements": []}
+    """Ревью через общий модуль."""
+    return await review_artifact(artifact, "BA")
 
 
 async def _wait_answer(
@@ -334,47 +295,12 @@ async def run_ba(
     # ── Финальный артефакт сформирован ───────────────────────────────────────
     artifact = _clean_artifact(response)
 
-    # ── Ревью качества ────────────────────────────────────────────────────────
-    await bot.send_message(notify_chat_id, "🔍 Проверяю качество BA артефакта...")
-    review = await _review_artifact(artifact, task)
-
-    score = review.get("score", 0)
-    improvements = review.get("improvements", [])
-    logger.info(f"BA ревью: score={score}, approved={review.get('approved')}")
-
-    # Если качество низкое — делаем улучшенный финальный прогон
-    if not review.get("approved") and improvements:
-        improvements_text = "\n".join(f"- {imp}" for imp in improvements)
-        user_text = (
-            f"## Запрос на разработку:\n{context}\n\n"
-            + (f"## История уточнений PM:\n{_format_qa_pairs(qa_rounds)}\n\n" if qa_rounds else "")
-            + f"## Черновик артефакта:\n{artifact}\n\n"
-            f"## Требуемые улучшения от ревьюера (score={score}/100):\n{improvements_text}\n\n"
-            f"[ИНСТРУКЦИЯ: Улучши артефакт устранив все замечания. "
-            f"Вопросов не задавай. Верни полный улучшенный артефакт.]"
-        )
-        content = build_content_with_attachment(user_text, task)
-        try:
-            improved = await call_claude(BA_SYSTEM, content, max_tokens=8192)
-            artifact = _clean_artifact(improved)
-            logger.info("BA артефакт улучшен после ревью")
-        except Exception as e:
-            logger.warning(f"BA улучшение не удалось: {e}")
-
     task.ba_text = artifact
     task.ba_summary = _extract_summary(artifact)
     task.ba_questions_count = len(qa_rounds)
     task.ba_answers = [r["answer"] for r in qa_rounds]
 
-    status_msg = f"✅ BA завершён (раундов: {len(qa_rounds)}, качество: {score}/100)"
-    await bot.send_message(notify_chat_id, status_msg)
+    await bot.send_message(notify_chat_id, f"✅ BA завершён (раундів уточнень: {len(qa_rounds)})")
     await notify_ba_done(bot, notify_chat_id, task.ba_summary)
-
-    logger.info(f"BA финал | раундов={len(qa_rounds)} score={score}")
+    logger.info(f"BA фінал | раундов={len(qa_rounds)}")
     return task
-
-
-def _extract_summary(text: str) -> str:
-    lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
-    summary = " ".join(lines[:3])
-    return summary[:200] + "..." if len(summary) > 200 else summary
