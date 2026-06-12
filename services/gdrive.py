@@ -131,6 +131,8 @@ async def upload_all_artifacts(task) -> bool:
         (f"pm_risks_{fn}_{tid}.md",     task.pm_risks),
         (f"pm_raci_{fn}_{tid}.md",      task.pm_raci),
         (f"pm_team_{fn}_{tid}.md",      task.pm_team),
+        (f"tz_biz_{fn}_{tid}.md",        task.pm_template_1),
+        (f"tz_sys_{fn}_{tid}.md",        task.pm_template_2),
         (f"projekt_tasks_{fn}_{tid}.csv", task.pm_projekt_csv),
     ]
 
