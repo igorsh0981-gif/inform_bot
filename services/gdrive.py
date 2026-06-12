@@ -2,6 +2,7 @@ import os
 import io
 import json
 import logging
+import asyncio
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2 import service_account
@@ -9,10 +10,7 @@ from google.oauth2.credentials import Credentials
 
 logger = logging.getLogger(__name__)
 
-PARENT_FOLDER_ID = os.getenv(
-    "GDRIVE_FOLDER_ID",
-    "1gK8_0-CjPPbNX1MsodfaZjuqXnOA7vjk"
-)
+PARENT_FOLDER_ID = os.getenv("GDRIVE_FOLDER_ID", "1gK8_0-CjPPbNX1MsodfaZjuqXnOA7vjk")
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
 
@@ -20,7 +18,6 @@ def _get_service():
     creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
     if not creds_json:
         raise ValueError("GOOGLE_CREDENTIALS_JSON не задан")
-
     creds_data = json.loads(creds_json)
     if creds_data.get("type") == "service_account":
         creds = service_account.Credentials.from_service_account_info(
@@ -37,120 +34,128 @@ def _get_service():
     return build("drive", "v3", credentials=creds, cache_discovery=False)
 
 
+def _create_folder_sync(feature_name: str) -> tuple[str, str]:
+    service = _get_service()
+    safe_name = feature_name[:100].strip()
+    metadata = {
+        "name": safe_name,
+        "mimeType": "application/vnd.google-apps.folder",
+        "parents": [PARENT_FOLDER_ID],
+    }
+    folder = service.files().create(body=metadata, fields="id").execute()
+    folder_id = folder["id"]
+    folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
+    return folder_id, folder_url
+
+
+def _upload_text_sync(folder_id: str, filename: str, content: str) -> str:
+    service = _get_service()
+    media = MediaIoBaseUpload(
+        io.BytesIO(content.encode("utf-8")),
+        mimetype="text/plain",   # plain text — Drive не капризничает
+    )
+    metadata = {"name": filename, "parents": [folder_id]}
+    file = service.files().create(body=metadata, media_body=media, fields="id").execute()
+    return file["id"]
+
+
+def _upload_bytes_sync(folder_id: str, filename: str, content: bytes, mimetype: str) -> str:
+    service = _get_service()
+    media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mimetype)
+    metadata = {"name": filename, "parents": [folder_id]}
+    file = service.files().create(body=metadata, media_body=media, fields="id").execute()
+    return file["id"]
+
+
 async def create_feature_folder(feature_name: str) -> tuple[str, str]:
-    """
-    Создаёт папку /Запрос на разработку/{feature_name}/
-    Возвращает (folder_id, folder_url)
-    """
     try:
-        service = _get_service()
-        safe_name = feature_name[:100].strip()
-
-        metadata = {
-            "name": safe_name,
-            "mimeType": "application/vnd.google-apps.folder",
-            "parents": [PARENT_FOLDER_ID],
-        }
-        folder = service.files().create(
-            body=metadata, fields="id"
-        ).execute()
-
-        folder_id = folder["id"]
-        folder_url = f"https://drive.google.com/drive/folders/{folder_id}"
-        logger.info(f"Папка создана: {safe_name} → {folder_url}")
+        folder_id, folder_url = await asyncio.to_thread(_create_folder_sync, feature_name)
+        logger.info(f"GDrive папка создана: {feature_name} → {folder_url}")
         return folder_id, folder_url
-
     except Exception as e:
-        logger.error(f"Ошибка создания папки GDrive: {e}")
+        logger.error(f"GDrive create_folder ошибка: {e}", exc_info=True)
         return "", ""
 
 
-async def upload_text_file(
-    folder_id: str,
-    filename: str,
-    content: str,
-) -> str:
-    """Загружает текстовый файл (.md) в папку. Возвращает file_id."""
+async def upload_text_file(folder_id: str, filename: str, content: str) -> str:
     try:
-        service = _get_service()
-        media = MediaIoBaseUpload(
-            io.BytesIO(content.encode("utf-8")),
-            mimetype="text/markdown",
-        )
-        metadata = {"name": filename, "parents": [folder_id]}
-        file = service.files().create(
-            body=metadata, media_body=media, fields="id"
-        ).execute()
-        logger.info(f"Загружен: {filename}")
-        return file["id"]
+        file_id = await asyncio.to_thread(_upload_text_sync, folder_id, filename, content)
+        logger.info(f"GDrive загружен: {filename} ({len(content)} байт)")
+        return file_id
     except Exception as e:
-        logger.error(f"Ошибка загрузки {filename}: {e}")
+        logger.error(f"GDrive upload_text ошибка [{filename}]: {e}", exc_info=True)
         return ""
 
 
-async def upload_bytes_file(
-    folder_id: str,
-    filename: str,
-    content: bytes,
-    mimetype: str,
-) -> str:
-    """Загружает бинарный файл (.xlsx) в папку. Возвращает file_id."""
+async def upload_bytes_file(folder_id: str, filename: str, content: bytes, mimetype: str) -> str:
     try:
-        service = _get_service()
-        media = MediaIoBaseUpload(io.BytesIO(content), mimetype=mimetype)
-        metadata = {"name": filename, "parents": [folder_id]}
-        file = service.files().create(
-            body=metadata, media_body=media, fields="id"
-        ).execute()
-        logger.info(f"Загружен: {filename}")
-        return file["id"]
+        file_id = await asyncio.to_thread(_upload_bytes_sync, folder_id, filename, content, mimetype)
+        logger.info(f"GDrive загружен: {filename} ({len(content)} байт)")
+        return file_id
     except Exception as e:
-        logger.error(f"Ошибка загрузки {filename}: {e}")
+        logger.error(f"GDrive upload_bytes ошибка [{filename}]: {e}", exc_info=True)
         return ""
 
 
 async def upload_all_artifacts(task) -> bool:
-    """
-    Загружает все 14 артефактов в папку фичи.
-    Возвращает True при успехе.
-    """
     fid = task.gdrive_feature_folder_id
     tid = task.task_id
-    fn = task.feature_name[:40].replace(" ", "_")
-
-    files_md = [
-        (f"ba_{fn}_{tid}.md",           task.ba_text),
-        (f"ba_full_{fn}_{tid}.md",       task.ba_text),     # расширенная версия
-        (f"sa_{fn}_{tid}.md",           task.sa_text),
-        (f"sa_full_{fn}_{tid}.md",       task.sa_text),
-        (f"qatc_{fn}_{tid}.md",         task.qatc_text),
-        (f"qatc_full_{fn}_{tid}.md",    task.qatc_text),
-        (f"pm_protocol_{fn}_{tid}.md",  task.pm_protocol),
-        (f"pm_jira_{fn}_{tid}.md",      task.pm_jira),
-        (f"pm_epics_{fn}_{tid}.md",     task.pm_epics),
-        (f"pm_risks_{fn}_{tid}.md",     task.pm_risks),
-        (f"pm_raci_{fn}_{tid}.md",      task.pm_raci),
-        (f"pm_team_{fn}_{tid}.md",      task.pm_team),
-        (f"tz_biz_{fn}_{tid}.md",        task.pm_template_1),
-        (f"tz_sys_{fn}_{tid}.md",        task.pm_template_2),
-        (f"projekt_tasks_{fn}_{tid}.csv", task.pm_projekt_csv),
-    ]
+    fn = task.feature_name[:40].replace(" ", "_").replace("/", "-")
 
     if not fid:
-        logger.error("upload_all_artifacts: folder_id пустой — загрузка невозможна")
+        logger.error("upload_all_artifacts: folder_id пустой")
         return False
 
+    # Диагностика пустых полей до загрузки
+    field_map = {
+        "ba_text": task.ba_text,
+        "sa_text": task.sa_text,
+        "qatc_text": task.qatc_text,
+        "pm_protocol": task.pm_protocol,
+        "pm_jira": task.pm_jira,
+        "pm_epics": task.pm_epics,
+        "pm_risks": task.pm_risks,
+        "pm_raci": task.pm_raci,
+        "pm_team": task.pm_team,
+        "pm_template_1": task.pm_template_1,
+        "pm_template_2": task.pm_template_2,
+        "pm_projekt_csv": task.pm_projekt_csv,
+    }
+    empty = [k for k, v in field_map.items() if not v]
+    if empty:
+        logger.warning(f"Пустые поля task перед загрузкой: {empty}")
+
+    files_md = [
+        (f"ba_{fn}_{tid}.md",              task.ba_text),
+        (f"ba_full_{fn}_{tid}.md",         task.ba_text),
+        (f"sa_{fn}_{tid}.md",              task.sa_text),
+        (f"sa_full_{fn}_{tid}.md",         task.sa_text),
+        (f"qatc_{fn}_{tid}.md",            task.qatc_text),
+        (f"qatc_full_{fn}_{tid}.md",       task.qatc_text),
+        (f"pm_protocol_{fn}_{tid}.md",     task.pm_protocol),
+        (f"pm_jira_{fn}_{tid}.md",         task.pm_jira),
+        (f"pm_epics_{fn}_{tid}.md",        task.pm_epics),
+        (f"pm_risks_{fn}_{tid}.md",        task.pm_risks),
+        (f"pm_raci_{fn}_{tid}.md",         task.pm_raci),
+        (f"pm_team_{fn}_{tid}.md",         task.pm_team),
+        (f"tz_biz_{fn}_{tid}.md",          task.pm_template_1),
+        (f"tz_sys_{fn}_{tid}.md",          task.pm_template_2),
+        (f"projekt_tasks_{fn}_{tid}.csv",  task.pm_projekt_csv),
+    ]
+
     success = True
+    uploaded = 0
+
     for filename, content in files_md:
         if content:
             result = await upload_text_file(fid, filename, content)
-            if not result:
-                logger.error(f"Не удалось загрузить: {filename}")
+            if result:
+                uploaded += 1
+            else:
                 success = False
         else:
-            logger.warning(f"Пропущен пустой артефакт: {filename}")
+            logger.warning(f"Пропущен (пустой): {filename}")
 
-    # XLSX отдельно (бинарный)
     if task.pm_projekt_xlsx:
         result = await upload_bytes_file(
             fid,
@@ -158,7 +163,10 @@ async def upload_all_artifacts(task) -> bool:
             task.pm_projekt_xlsx,
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
-        if not result:
+        if result:
+            uploaded += 1
+        else:
             success = False
 
+    logger.info(f"GDrive итог: загружено {uploaded}/{len(files_md)+1} файлов")
     return success
