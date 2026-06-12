@@ -53,6 +53,8 @@ class Task:
     pm_team: str = ""
     pm_projekt_csv: str = ""
     pm_projekt_xlsx: bytes = field(default_factory=bytes)
+    pm_template_1: str = ""   # Бизнесовое ТЗ
+    pm_template_2: str = ""   # Системное ТЗ (SRS)
 
     # Статус
     status: str = "in_progress"
