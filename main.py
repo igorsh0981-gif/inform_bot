@@ -70,6 +70,9 @@ ANTI_TRIGGERS = ["?", "как ", "почему", "когда", "зачем", "ч
 # Очереди ответов { task_id: Queue }
 answer_queues: dict[str, asyncio.Queue] = {}
 
+# Кэш вариантов ответа BA { task_id: [opt0, opt1, ...] }
+ba_options_cache: dict[str, list[str]] = {}
+
 
 def is_feature_trigger(text: str) -> bool:
     text_lower = text.lower()
@@ -118,7 +121,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
     value = data[len("ba_opt:"):]
 
-    if value == "__custom__":
+    # "__ " = пользователь хочет ввести текст сам
+    if value == "__":
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
             chat_id=query.message.chat.id,
@@ -126,15 +130,26 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
+    # Восстанавливаем полный текст варианта из кэша по индексу
+    display_value = value  # fallback
+    if value.isdigit():
+        idx = int(value)
+        # Ищем кэш для активной задачи
+        for task_id in answer_queues:
+            opts = ba_options_cache.get(task_id, [])
+            if idx < len(opts):
+                display_value = opts[idx]
+            break
+
     if answer_queues:
         for task_id, queue in answer_queues.items():
-            await queue.put(value)
-            logger.info(f"[CALLBACK] Вариант выбран для {task_id}: {value[:50]}")
+            await queue.put(display_value)
+            logger.info(f"[CALLBACK] Вариант выбран для {task_id}: {display_value[:50]}")
             break
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
             chat_id=query.message.chat.id,
-            text=f"✅ Принято: {value}",
+            text=f"✅ Принято: {display_value}",
         )
 
 
@@ -250,7 +265,7 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
         if not notion_url:
             logger.warning("[CHAIN] Notion страница не создана")
 
-        task = await run_ba(task, bot, chat_id, answer_queue)
+        task = await run_ba(task, bot, chat_id, answer_queue, ba_options_cache)
         task = await run_sa(task, bot, chat_id)
         task = await run_qatc(task, bot, chat_id)
         task = await run_pm(task, bot, chat_id)
