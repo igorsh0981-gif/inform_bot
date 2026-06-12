@@ -22,7 +22,7 @@ from services.parser import extract_feature
 from services.figma_reader import extract_figma_key, extract_figma_url, read_figma
 from services.file_handler import detect_attachment, process_attachment
 from services.sheets import append_task
-from services.notifier import notify_group, notify_accepted
+from services.notifier import notify_self, notify_accepted
 from services.dispatcher import dispatch_to_release_agent
 
 # ── Логирование ────────────────────────────────────────────────────────────────
@@ -132,8 +132,8 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
     task.feature_name = parsed.get("feature_name", raw_text[:50])
     task.summary = parsed.get("summary", raw_text[:300])
 
-    # ── Уведомление в группу ───────────────────────────────────────────────────
-    await notify_group(context.bot, message.chat.id, task)
+    # ── Уведомление себе (не в группу) ────────────────────────────────────────
+    await notify_self(context.bot, task)
 
     # ── Запись в Google Sheets ─────────────────────────────────────────────────
     task.status = "in_progress"
@@ -143,13 +143,10 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
     dispatched = await dispatch_to_release_agent(task)
 
     if dispatched:
-        await notify_accepted(context.bot, message.chat.id, task)
+        await notify_accepted(context.bot, task)
         logger.info(f"Задача {task.task_id} успешно передана агенту")
     else:
-        await context.bot.send_message(
-            chat_id=message.chat.id,
-            text=f"⚠️ Задача #{task.task_id} принята, но передача агенту не удалась. Попробуем повторно.",
-        )
+        logger.error(f"Задача {task.task_id} — передача агенту не удалась")
 
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
