@@ -34,6 +34,8 @@ from agents.ba_agent import run_ba
 from agents.sa_agent import run_sa
 from agents.qatc_agent import run_qatc
 from agents.pm_agent import run_pm
+from agents.tz_biz_agent import run_tz_biz
+from agents.tz_sys_agent import run_tz_sys
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -233,6 +235,10 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
 
         # PM
         task = await run_pm(task, bot, chat_id)
+
+        # ТЗ Бизнесовое и Системное (параллельно после PM)
+        task.pm_template_1 = await run_tz_biz(task)
+        task.pm_template_2 = await run_tz_sys(task)
 
         # Упаковка
         await notify_packing(bot, chat_id)
