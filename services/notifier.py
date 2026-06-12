@@ -1,3 +1,4 @@
+import os
 import logging
 from telegram import Bot
 from models.task import Task
@@ -58,24 +59,27 @@ def format_accepted_message(task: Task) -> str:
     )
 
 
-async def notify_group(bot: Bot, chat_id: int, task: Task) -> None:
-    """Отправляет уведомление о новой задаче в группу-источник"""
+BOT_CHAT_ID = int(os.getenv("BOT_CHAT_ID", "5281759957"))
+
+
+async def notify_self(bot: Bot, task: Task) -> None:
+    """Отправляет уведомление о новой задаче себе (в личку бота с PM)"""
     try:
         text = format_new_task_message(task)
         await bot.send_message(
-            chat_id=chat_id,
+            chat_id=BOT_CHAT_ID,
             text=text,
-            parse_mode=None,  # plain text как у QuestionsNBU
+            parse_mode=None,
         )
-        logger.info(f"Уведомление отправлено в чат {chat_id}")
+        logger.info(f"Уведомление отправлено в личку бота")
     except Exception as e:
         logger.error(f"Ошибка отправки уведомления: {e}")
 
 
-async def notify_accepted(bot: Bot, chat_id: int, task: Task) -> None:
-    """Отправляет подтверждение принятия задачи"""
+async def notify_accepted(bot: Bot, task: Task) -> None:
+    """Отправляет подтверждение принятия задачи себе"""
     try:
         text = format_accepted_message(task)
-        await bot.send_message(chat_id=chat_id, text=text)
+        await bot.send_message(chat_id=BOT_CHAT_ID, text=text)
     except Exception as e:
         logger.error(f"Ошибка отправки подтверждения: {e}")
