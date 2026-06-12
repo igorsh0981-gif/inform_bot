@@ -99,7 +99,7 @@ async def update_feature_page(page_url: str, task) -> bool:
     now = datetime.now(timezone.utc).isoformat()
 
     properties = {
-        "Status": {"select": {"name": "Done"}},
+        "Status": {"status": {"name": "Done"}},
         "Finished": {"date": {"start": now}},
     }
 
