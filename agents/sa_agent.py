@@ -109,19 +109,6 @@ BA_ANSWER_SYSTEM = """Ты — Senior BA банковского мобильно
 Не говори что вопрос помечен TBD — просто дай ответ.
 """
 
-SA_REVIEWER_SYSTEM = """Ты — архитектор банковских систем. Проверь SA артефакт.
-Верни ТОЛЬКО JSON:
-{
-  "score": 0-100,
-  "approved": true/false,
-  "issues": ["issue1"],
-  "improvements": ["улучшение 1"]
-}
-Критерии: API контракты полные (0-20), модель данных есть (0-20),
-sequence диаграмма (0-20), NFR с числами (0-20), оценка трудоёмкости (0-20).
-approved=true если score >= 75.
-"""
-
 
 def _extract_sa_question(text: str) -> str | None:
     match = re.search(r"##\s*ВОПРОС_К_BA:(.*?)(?=##|\Z)", text, re.DOTALL | re.IGNORECASE)
@@ -198,32 +185,9 @@ async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
 
     artifact = _clean_sa_artifact(response)
 
-    # Ревью
-    await bot.send_message(notify_chat_id, "🔍 Проверяю качество SA артефакта...")
-    try:
-        import json
-        raw_review = await call_claude(SA_REVIEWER_SYSTEM, artifact, max_tokens=512, timeout=40)
-        clean = re.sub(r"```(?:json)?|```", "", raw_review).strip()
-        review = json.loads(clean)
-        score = review.get("score", 0)
-        if not review.get("approved") and review.get("improvements"):
-            imps = "\n".join(f"- {i}" for i in review["improvements"])
-            improved_text = (
-                f"{base_text}\n\n## Черновик SA:\n{artifact}\n\n"
-                f"## Улучшения (score={score}/100):\n{imps}\n\n"
-                f"[ИНСТРУКЦИЯ: Улучши артефакт. Вопросов не задавай.]"
-            )
-            content = build_content_with_attachment(improved_text, task)
-            improved = await call_claude(SA_SYSTEM, content, max_tokens=8192)
-            artifact = _clean_sa_artifact(improved)
-            logger.info(f"SA улучшен после ревью (score={score})")
-    except Exception as e:
-        score = 0
-        logger.warning(f"SA ревью не удалось: {e}")
-
     task.sa_text = artifact
     task.sa_summary = _extract_summary(artifact)
-    await bot.send_message(notify_chat_id, f"✅ SA завершён (уточнений: {len(clarifications)}, качество: {score}/100)")
+    await bot.send_message(notify_chat_id, f"✅ SA завершён (уточнений у BA: {len(clarifications)})")
     await notify_sa_done(bot, notify_chat_id, task.sa_summary)
     return task
 
