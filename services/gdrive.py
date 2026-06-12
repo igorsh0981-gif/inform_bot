@@ -136,12 +136,19 @@ async def upload_all_artifacts(task) -> bool:
         (f"projekt_tasks_{fn}_{tid}.csv", task.pm_projekt_csv),
     ]
 
+    if not fid:
+        logger.error("upload_all_artifacts: folder_id пустой — загрузка невозможна")
+        return False
+
     success = True
     for filename, content in files_md:
         if content:
             result = await upload_text_file(fid, filename, content)
             if not result:
+                logger.error(f"Не удалось загрузить: {filename}")
                 success = False
+        else:
+            logger.warning(f"Пропущен пустой артефакт: {filename}")
 
     # XLSX отдельно (бинарный)
     if task.pm_projekt_xlsx:
