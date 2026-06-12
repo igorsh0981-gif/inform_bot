@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from telegram import Update
 from telegram.ext import (
     Application,
+    CommandHandler,
     MessageHandler,
     filters,
     ContextTypes,
@@ -145,6 +146,46 @@ async def handle_ba_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         break
 
 
+async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    /skip — продолжить анализ без ответа на вопросы BA.
+    Кладёт специальный маркер в очередь.
+    """
+    message = update.message
+    if not message or message.chat.id != BOT_CHAT_ID:
+        return
+
+    if not ba_answer_queues:
+        await message.reply_text("Нет активных задач ожидающих ответа.")
+        return
+
+    for task_id, queue in ba_answer_queues.items():
+        await queue.put("[SKIP — пользователь пропустил вопрос]")
+        await message.reply_text(
+            f"⏩ Пропускаю вопросы BA для задачи #{task_id}\n"
+            f"Продолжаю анализ с допущениями [ASSUMED]..."
+        )
+        logger.info(f"BA вопрос пропущен для задачи {task_id}")
+        break
+
+
+async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Команда /status — показывает активные задачи"""
+    message = update.message
+    if not message or message.chat.id != BOT_CHAT_ID:
+        return
+
+    if not ba_answer_queues:
+        await message.reply_text("Нет активных задач в обработке.")
+        return
+
+    tasks_list = "\n".join([f"  • #{tid}" for tid in ba_answer_queues.keys()])
+    await message.reply_text(
+        f"⚙️ Активные задачи:\n{tasks_list}\n\n"
+        f"Для пропуска вопросов BA: /skip"
+    )
+
+
 async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
     """BA → SA → QATC → PM → GDrive → Notion"""
     chat_id = BOT_CHAT_ID
@@ -199,6 +240,10 @@ def main() -> None:
     logger.info("Запуск @InformNBU_bot...")
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+    # Команды в личке бота
+    app.add_handler(CommandHandler("skip", handle_skip))
+    app.add_handler(CommandHandler("status", handle_status))
 
     # Триггеры фич из групп
     app.add_handler(MessageHandler(
