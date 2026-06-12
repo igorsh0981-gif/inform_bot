@@ -39,8 +39,7 @@ async def create_feature_page(task) -> str:
     if task.chat_id:
         properties["ChatId"] = {"rich_text": [{"text": {"content": str(task.chat_id)}}]}
 
-    # Channel как rich_text (не select — так безопаснее)
-    properties["Channel"] = {"rich_text": [{"text": {"content": "Telegram"}}]}
+    properties["Channel"] = {"select": {"name": "Telegram"}}
 
     if task.gdrive_feature_folder_url:
         properties["Google Doc URL"] = {"url": task.gdrive_feature_folder_url}
