@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "cd inform_bot && python main.py"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
