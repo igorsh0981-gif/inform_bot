@@ -32,7 +32,7 @@ async def create_feature_page(task) -> str:
             "title": [{"text": {"content": task.feature_name or "Без названия"}}]
         },
         "Channel": {
-            "rich_text": [{"text": {"content": "Telegram"}}]
+            "select": {"name": "Telegram"}
         },
         "ChatId": {
             "rich_text": [{"text": {"content": str(task.chat_id)}}]
@@ -41,7 +41,7 @@ async def create_feature_page(task) -> str:
             "rich_text": [{"text": {"content": "/chainlight"}}]
         },
         "Status": {
-            "select": {"name": "Running"}
+            "status": {"name": "In progress"}
         },
         "RunId": {
             "rich_text": [{"text": {"content": f"{task.chat_id}_{task.task_id}"}}]
