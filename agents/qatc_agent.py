@@ -95,17 +95,6 @@ BA_ANSWER_SYSTEM = """Ты — BA банковского приложения. �
 Конкретно, опираясь на бизнес-требования. Используй [ASSUMED] если точных данных нет.
 """
 
-QATC_REVIEWER_SYSTEM = """Проверь QATC артефакт. Верни ТОЛЬКО JSON:
-{
-  "score": 0-100,
-  "approved": true/false,
-  "issues": ["issue1"],
-  "improvements": ["улучшение 1"]
-}
-Критерии: количество ТК>=22 (0-25), негативные сценарии (0-20), безопасность (0-20),
-конкретные тестовые данные (0-20), чеклист релиза (0-15). approved=true если score>=75.
-"""
-
 
 def _extract_qa_question(text: str) -> tuple[str | None, str | None]:
     for target in ("SA", "BA"):
@@ -180,30 +169,9 @@ async def run_qatc(task: Task, bot, notify_chat_id: int) -> Task:
 
     artifact = _clean_qatc_artifact(response)
 
-    # Ревью
-    await bot.send_message(notify_chat_id, "🔍 Проверяю качество QATC артефакта...")
-    score = 0
-    try:
-        import json
-        raw_review = await call_claude(QATC_REVIEWER_SYSTEM, artifact, max_tokens=512, timeout=40)
-        clean = re.sub(r"```(?:json)?|```", "", raw_review).strip()
-        review = json.loads(clean)
-        score = review.get("score", 0)
-        if not review.get("approved") and review.get("improvements"):
-            imps = "\n".join(f"- {i}" for i in review["improvements"])
-            improved = await call_claude(
-                QATC_SYSTEM,
-                f"{base_text}\n\n## Черновик:\n{artifact}\n\n## Улучшения:\n{imps}\n\n[Финальный прогон. Вопросов не задавай.]",
-                max_tokens=8192,
-            )
-            artifact = _clean_qatc_artifact(improved)
-            logger.info(f"QATC улучшен (score={score})")
-    except Exception as e:
-        logger.warning(f"QATC ревью не удалось: {e}")
-
     task.qatc_text = artifact
     task.qatc_summary = _extract_summary(artifact)
-    await bot.send_message(notify_chat_id, f"✅ QATC завершён (качество: {score}/100)")
+    await bot.send_message(notify_chat_id, "✅ QATC завершён")
     await notify_qatc_done(bot, notify_chat_id, task.qatc_summary)
     return task
 
