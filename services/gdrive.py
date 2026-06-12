@@ -97,8 +97,8 @@ async def _upload_via_webhook(folder_id: str, filename: str, content_b64: str) -
 
 
 async def upload_text_file(folder_id: str, filename: str, content: str) -> str:
-    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
-    return await _upload_via_webhook(folder_id, filename, b64)
+    # Шлём plain text — n8n конвертирует через toBinary
+    return await _upload_via_webhook(folder_id, filename, content)
 
 
 async def upload_bytes_file(folder_id: str, filename: str, content: bytes, mimetype: str) -> str:
