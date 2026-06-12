@@ -12,7 +12,6 @@ NOTION_DATABASE_ID = os.getenv(
 
 
 def _headers():
-    """Формируем headers динамически чтобы подхватить токен из env"""
     return {
         "Authorization": f"Bearer {os.getenv('NOTION_TOKEN', '')}",
         "Notion-Version": "2022-06-28",
@@ -27,21 +26,17 @@ async def create_feature_page(task) -> str:
         logger.warning("NOTION_TOKEN не задан — пропускаем Notion")
         return ""
 
+    # Только поля которые реально есть в схеме базы:
+    # Name, Command, Finished, Google Doc URL, Last error, RunId, Started, Status
     properties = {
         "Name": {
             "title": [{"text": {"content": task.feature_name or "Без названия"}}]
         },
-        "Channel": {
-            "select": {"name": "Telegram"}
-        },
-        "ChatId": {
-            "rich_text": [{"text": {"content": str(task.chat_id)}}]
+        "Status": {
+            "status": {"name": "Running"}
         },
         "Command": {
             "rich_text": [{"text": {"content": "/chainlight"}}]
-        },
-        "Status": {
-            "status": {"name": "In progress"}
         },
         "RunId": {
             "rich_text": [{"text": {"content": f"{task.chat_id}_{task.task_id}"}}]
@@ -51,7 +46,6 @@ async def create_feature_page(task) -> str:
         },
     }
 
-    # Google Doc URL только если есть значение
     if task.gdrive_feature_folder_url:
         properties["Google Doc URL"] = {"url": task.gdrive_feature_folder_url}
 
@@ -68,7 +62,7 @@ async def create_feature_page(task) -> str:
                 json=body,
             )
             if resp.status_code != 200:
-                logger.error(f"Notion ошибка {resp.status_code}: {resp.text}")
+                logger.error(f"Notion create ошибка {resp.status_code}: {resp.text}")
                 return ""
             data = resp.json()
 
@@ -90,10 +84,8 @@ async def update_feature_page(page_url: str, task) -> bool:
 
     # Извлекаем page_id из URL
     page_id = page_url.rstrip("/").split("/")[-1]
-    if "-" not in page_id and len(page_id) == 32:
-        pass  # уже чистый ID
-    else:
-        page_id = page_id.split("-")[-1] if "-" in page_id else page_id
+    if "-" in page_id:
+        page_id = page_id.split("-")[-1]
 
     from datetime import datetime, timezone
     now = datetime.now(timezone.utc).isoformat()
