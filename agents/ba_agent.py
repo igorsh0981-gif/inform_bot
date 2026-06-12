@@ -1,6 +1,6 @@
 """
 BA Agent — Business Analyst
-Анализирует задачу, задаёт уточняющие вопросы (макс 5 итераций, таймаут 5 мин),
+Анализирует задачу, задаёт уточняющие вопросы (макс 3 итерации, таймаут 5 мин),
 формирует бизнес-требования.
 """
 
@@ -9,15 +9,15 @@ import logging
 import re
 from datetime import datetime
 
-from telegram import Bot
+from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from models.task import Task
 from services.claude_client import call_claude, build_content_with_attachment
 from services.notifier import notify_ba_questions, notify_ba_timeout, notify_ba_done
 
 logger = logging.getLogger(__name__)
 
-MAX_QUESTIONS = 5
-ANSWER_TIMEOUT = 300  # 5 минут в секундах
+MAX_QUESTIONS = 3          # Снижено с 5 до 3
+ANSWER_TIMEOUT = 300       # 5 минут
 
 BA_SYSTEM = """Ты — опытный бизнес-аналитик банковского мобильного приложения (iOS/Android).
 
@@ -45,24 +45,56 @@ BA_SYSTEM = """Ты — опытный бизнес-аналитик банко�
 ### 5. Открытые вопросы
 - Помечай неясности как [UNK], предположения как [ASSUMED], требует уточнения как [TBD]
 
-## Важно:
-- Если есть КРИТИЧЕСКИЕ неясности (UNK/TBD) — верни секцию "## ВОПРОСЫ:" в конце
-- Если всё понятно или неясности некритичны — не добавляй секцию вопросов
+## Правила формирования вопросов:
+- Если есть КРИТИЧЕСКИЕ неясности — верни секцию "## ВОПРОСЫ:" в конце (МАКСИМУМ 3 вопроса)
+- Каждый вопрос ОБЯЗАТЕЛЬНО заканчивается знаком "?"
+- Если вопрос предполагает выбор из известных вариантов — добавь "ВАРИАНТЫ: A) ... B) ... C) ..."
+- Если всё понятно или неясности некритичны — НЕ добавляй секцию вопросов
 - Пиши на русском языке
 - Учитывай специфику банковского приложения НБУ (Национальный банк Узбекистана)
 """
 
 
-def _extract_questions(text: str) -> str | None:
-    """Извлекает секцию вопросов из ответа BA"""
+def _extract_questions(text: str) -> list[dict] | None:
+    """
+    Извлекает секцию вопросов из ответа BA.
+    Возвращает список словарей: {text, options}
+    """
     match = re.search(r"##\s*ВОПРОСЫ:(.*?)(?=##|$)", text, re.DOTALL | re.IGNORECASE)
-    if match:
-        questions = match.group(1).strip()
-        if questions and len(questions) > 10:
-            return questions
-    # Также проверяем наличие маркеров неясности
-    has_unknown = bool(re.search(r"\[UNK\]|\[TBD\]", text))
-    return None  # Не прерываем если только ASSUMED
+    if not match:
+        return None
+
+    raw = match.group(1).strip()
+    if not raw or len(raw) < 10:
+        return None
+
+    questions = []
+    # Разбиваем на отдельные вопросы по нумерации
+    items = re.split(r"\n\s*\d+[\.\)]\s*", "\n" + raw)
+    for item in items:
+        item = item.strip()
+        if not item:
+            continue
+
+        # Извлекаем варианты ответа если есть
+        options = []
+        options_match = re.search(r"ВАРИАНТЫ:(.*?)(?=\n\n|$)", item, re.DOTALL)
+        if options_match:
+            opts_raw = options_match.group(1)
+            for opt in re.findall(r"[A-Za-zА-Яа-яЁё]\)\s*(.+)", opts_raw):
+                options.append(opt.strip())
+            # Убираем блок вариантов из текста вопроса
+            item = item[:options_match.start()].strip()
+
+        # Убеждаемся что вопрос заканчивается на "?"
+        q_text = item.strip()
+        if q_text and not q_text.endswith("?"):
+            q_text += "?"
+
+        if q_text:
+            questions.append({"text": q_text, "options": options})
+
+    return questions if questions else None
 
 
 def _clean_artifact(text: str) -> str:
@@ -70,6 +102,40 @@ def _clean_artifact(text: str) -> str:
     return re.sub(
         r"##\s*ВОПРОСЫ:.*?(?=##|$)", "", text, flags=re.DOTALL | re.IGNORECASE
     ).strip()
+
+
+async def _send_question_with_options(
+    bot: Bot,
+    chat_id: int,
+    question: dict,
+    attempt: int,
+    total: int,
+) -> None:
+    """Отправляет вопрос с вариантами ответа (кнопки) если они есть."""
+    q_text = question["text"]
+    options = question.get("options", [])
+
+    header = f"❓ Вопрос BA ({attempt}/{total}):\n\n{q_text}"
+
+    if options:
+        # Формируем inline-кнопки для каждого варианта
+        keyboard = []
+        for i, opt in enumerate(options):
+            label = f"{chr(65+i)}) {opt[:40]}"  # A) B) C) ...
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"ba_opt:{opt[:100]}")])
+        keyboard.append([InlineKeyboardButton("✍️ Введу свой ответ", callback_data="ba_opt:__custom__")])
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await bot.send_message(
+            chat_id=chat_id,
+            text=header + "\n\n⬇️ Выберите вариант или введите ответ текстом:",
+            reply_markup=reply_markup,
+        )
+    else:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=header + "\n\n✍️ Напишите ответ текстом или используйте:\n/skip — пропустить\n/stop — остановить анализ",
+        )
 
 
 async def run_ba(
@@ -87,8 +153,9 @@ async def run_ba(
 
     context = task.build_context()
     accumulated_answers = []
+    question_count = 0
 
-    for attempt in range(1, MAX_QUESTIONS + 2):  # +2 чтобы сделать финальный прогон
+    for attempt in range(1, MAX_QUESTIONS + 2):
         # Формируем промпт с накопленными ответами
         user_text = f"Запрос на разработку:\n{context}"
         if accumulated_answers:
@@ -107,59 +174,70 @@ async def run_ba(
         # Нет вопросов или исчерпали лимит — финализируем
         if not questions or attempt > MAX_QUESTIONS:
             if attempt > MAX_QUESTIONS and questions:
-                # Добавляем пометку о незакрытых вопросах
                 response += "\n\n---\n⚠️ Часть вопросов осталась без ответа — анализ продолжен с допущениями [ASSUMED]"
 
             task.ba_text = _clean_artifact(response)
             task.ba_summary = _extract_summary(response)
-            task.ba_questions_count = attempt - 1
+            task.ba_questions_count = question_count
             task.ba_answers = accumulated_answers
 
             await notify_ba_done(bot, notify_chat_id, task.ba_summary)
-            logger.info(f"BA завершён за {attempt - 1} итераций вопросов")
+            logger.info(f"BA завершён за {question_count} итераций вопросов")
             return task
 
-        # Есть вопросы — отправляем и ждём ответ
-        if attempt <= MAX_QUESTIONS:
-            await notify_ba_questions(bot, notify_chat_id, questions, attempt)
+        # Есть вопросы — отправляем по одному
+        question_count += 1
+        q = questions[0]  # Берём первый вопрос из списка
+        await _send_question_with_options(bot, notify_chat_id, q, attempt, MAX_QUESTIONS)
 
-            try:
-                answer = await asyncio.wait_for(
-                    answer_queue.get(),
-                    timeout=ANSWER_TIMEOUT,
-                )
-                # Проверяем STOP
-                if "[STOP" in answer:
-                    logger.info("BA получил STOP — прерываем анализ")
-                    raise InterruptedError("Пользователь остановил анализ")
+        try:
+            answer = await asyncio.wait_for(
+                answer_queue.get(),
+                timeout=ANSWER_TIMEOUT,
+            )
 
-                # Проверяем SKIP
-                if "[SKIP" in answer:
-                    logger.info(f"BA получил SKIP на итерации {attempt}")
-                    accumulated_answers.append(f"Ответ {attempt}: [ПРОПУЩЕНО]")
-                    task.ba_answers = accumulated_answers
-                    continue
+            if "[STOP" in answer:
+                logger.info("BA получил STOP — прерываем анализ")
+                raise InterruptedError("Пользователь остановил анализ")
 
-                accumulated_answers.append(f"Ответ {attempt}: {answer}")
+            if "[SKIP" in answer:
+                logger.info(f"BA получил SKIP на итерации {attempt}")
+                accumulated_answers.append(f"Вопрос {attempt}: [ПРОПУЩЕНО PM]")
                 task.ba_answers = accumulated_answers
-                logger.info(f"BA получил ответ на итерации {attempt}")
-
-            except asyncio.TimeoutError:
-                await notify_ba_timeout(bot, notify_chat_id)
-                accumulated_answers.append(
-                    f"Ответ {attempt}: [НЕ ПОЛУЧЕН — продолжено с допущениями]"
-                )
-                # После таймаута делаем финальный прогон без вопросов
                 continue
 
-    # Запасной финал если вышли из цикла иначе
-    task.ba_text = task.ba_text or response
-    task.ba_summary = task.ba_summary or _extract_summary(response)
+            accumulated_answers.append(f"Вопрос {attempt}: {answer}")
+            task.ba_answers = accumulated_answers
+            logger.info(f"BA получил ответ на итерации {attempt}")
+
+        except asyncio.TimeoutError:
+            await notify_ba_timeout(bot, notify_chat_id)
+            accumulated_answers.append(f"Вопрос {attempt}: [НЕ ПОЛУЧЕН — таймаут, продолжено с допущениями]")
+            # После таймаута на первом же вопросе — выходим без новых вопросов
+            break
+
+    # Финальный прогон с накопленными ответами (после таймаута или исчерпания лимита)
+    user_text = f"Запрос на разработку:\n{context}"
+    if accumulated_answers:
+        user_text += "\n\n## Уточнения от PM:\n" + "\n".join(accumulated_answers)
+    user_text += "\n\n[ИНСТРУКЦИЯ: Не задавай больше вопросов. Сформируй финальный артефакт с допущениями [ASSUMED] для всего неясного.]"
+
+    content = build_content_with_attachment(user_text, task)
+    try:
+        response = await call_claude(BA_SYSTEM, content, max_tokens=8192)
+    except Exception as e:
+        logger.error(f"BA финальный Claude ошибка: {e}")
+        response = task.ba_text or "Ошибка формирования BA артефакта"
+
+    task.ba_text = _clean_artifact(response)
+    task.ba_summary = _extract_summary(response)
+    task.ba_questions_count = question_count
+    task.ba_answers = accumulated_answers
+    await notify_ba_done(bot, notify_chat_id, task.ba_summary)
     return task
 
 
 def _extract_summary(text: str) -> str:
-    """Извлекает краткое резюме из артефакта (первые 200 символов содержательного текста)"""
     lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
     summary = " ".join(lines[:3])
     return summary[:200] + "..." if len(summary) > 200 else summary
