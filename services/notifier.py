@@ -74,7 +74,10 @@ async def notify_ba_questions(bot: Bot, chat_id: int, questions: str, attempt: i
     await _send(bot,
         f"❓ BA запрашивает уточнения (попытка {attempt}/5)\n\n"
         f"{questions}\n\n"
-        f"⏰ Жду ответ 5 минут..."
+        f"⏰ Жду ответ 5 минут...\n"
+        f"➡️ Ответьте текстом или используйте команды:\n"
+        f"/skip — пропустить вопрос и продолжить\n"
+        f"/stop — остановить анализ"
     )
 
 
