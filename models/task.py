@@ -17,6 +17,7 @@ class Task:
     author_name: str = ""
     chat_id: int = 0
     chat_name: str = ""
+    chat_type: str = ""
 
     # Вложения
     has_attachment: bool = False
