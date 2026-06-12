@@ -1,6 +1,6 @@
 """
 @InformNBU_bot — единый бот-диспетчер и оркестратор агентов
-Слушает группы, извлекает суть фичи, запускает BA→SA→QATC→PM напрямую.
+Webhook режим для Railway (решает 409 Conflict).
 """
 
 import os
@@ -44,11 +44,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-TELEGRAM_TOKEN = os.getenv(
-    "TELEGRAM_TOKEN",
-    "8452455471:AAHsi4JaO_UOPXqIZWm2wUiCl4a1JZybP70"
-)
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 BOT_CHAT_ID = int(os.getenv("BOT_CHAT_ID", "5281759957"))
+
+# Railway автоматически выдаёт RAILWAY_PUBLIC_DOMAIN
+RAILWAY_DOMAIN = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+WEBHOOK_PATH = f"/webhook/{TELEGRAM_TOKEN}"
+PORT = int(os.getenv("PORT", "8080"))
 
 FEATURE_TRIGGERS = [
     "фича", "feature",
@@ -81,10 +83,7 @@ def is_feature_trigger(text: str) -> bool:
 
 
 async def handle_pm_text_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    Ответы PM текстом на вопросы BA/SA/QATC — только из личного чата BOT_CHAT_ID.
-    Этот хендлер регистрируется ПЕРВЫМ для личного чата.
-    """
+    """Ответы PM текстом — только из личного чата BOT_CHAT_ID. Регистрируется первым."""
     message = update.message
     if not message:
         return
@@ -95,12 +94,10 @@ async def handle_pm_text_reply(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     if not answer_queues:
-        # Нет активных задач — может быть новая фича из личного чата
         await handle_feature_message(update, context)
         return
 
     text = message.text or ""
-    # Кладём ответ в первую активную очередь
     for task_id, queue in answer_queues.items():
         await queue.put(text)
         logger.info(f"[PM_REPLY] Ответ получен для задачи {task_id}: {text[:50]}")
@@ -108,7 +105,7 @@ async def handle_pm_text_reply(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Обрабатывает нажатие на inline-кнопку вариантов ответа"""
+    """Inline-кнопки вариантов ответа BA"""
     query = update.callback_query
     if not query:
         return
@@ -129,11 +126,10 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    # Кладём выбранный вариант в очередь
     if answer_queues:
         for task_id, queue in answer_queues.items():
             await queue.put(value)
-            logger.info(f"[CALLBACK] Вариант выбран для задачи {task_id}: {value[:50]}")
+            logger.info(f"[CALLBACK] Вариант выбран для {task_id}: {value[:50]}")
             break
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
@@ -143,14 +139,13 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Ловит триггеры фич из ГРУПП (или личного чата если нет активных задач)"""
+    """Триггеры фич из групп (или личного чата если нет активных задач)"""
     message = update.message
     if not message:
         return
 
     raw_text = message.text or message.caption or ""
 
-    # Из личного чата — только если нет активных задач
     if message.chat.id == BOT_CHAT_ID and answer_queues:
         return
 
@@ -198,57 +193,41 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/skip — пропустить текущий вопрос агента"""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
-
     if not answer_queues:
-        await message.reply_text("⚠️ Нет активных задач ожидающих ответа.")
+        await message.reply_text("⚠️ Нет активных задач.")
         return
-
     for task_id, queue in answer_queues.items():
         await queue.put("[SKIP — пользователь пропустил вопрос]")
-        await message.reply_text(
-            f"⏩ Вопрос пропущен для задачи #{task_id}\n"
-            f"Продолжаю анализ с допущениями [ASSUMED]..."
-        )
-        logger.info(f"Вопрос пропущен для задачи {task_id}")
+        await message.reply_text(f"⏩ Вопрос пропущен для задачи #{task_id}")
         break
 
 
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/stop — остановить анализ"""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
-
     if not answer_queues:
-        await message.reply_text("⚠️ Нет активных задач для остановки.")
+        await message.reply_text("⚠️ Нет активных задач.")
         return
-
     for task_id, queue in answer_queues.items():
         await queue.put("[STOP — пользователь остановил анализ]")
         await message.reply_text(f"🛑 Анализ задачи #{task_id} остановлен.")
-        logger.info(f"Анализ остановлен для задачи {task_id}")
         break
 
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/status — активные задачи"""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
-
     if not answer_queues:
-        await message.reply_text("✅ Нет активных задач в обработке.")
+        await message.reply_text("✅ Нет активных задач.")
         return
-
     tasks_list = "\n".join([f"  • #{tid}" for tid in answer_queues.keys()])
     await message.reply_text(
-        f"⚙️ Активные задачи:\n{tasks_list}\n\n"
-        f"/skip — пропустить вопрос\n"
-        f"/stop — остановить анализ"
+        f"⚙️ Активные задачи:\n{tasks_list}\n\n/skip — пропустить\n/stop — остановить"
     )
 
 
@@ -260,42 +239,28 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
     try:
         await notify_started(bot, chat_id, task)
 
-        # GDrive папка
         folder_id, folder_url = await create_feature_folder(task.feature_name)
         task.gdrive_feature_folder_id = folder_id
         task.gdrive_feature_folder_url = folder_url
         if not folder_id:
-            logger.error("[CHAIN] GDrive папка не создана!")
-            await bot.send_message(chat_id, "⚠️ Не удалось создать папку в GDrive. Проверьте credentials.")
+            await bot.send_message(chat_id, "⚠️ Не удалось создать папку в GDrive.")
 
-        # Notion страница
         notion_url = await create_feature_page(task)
         task.notion_page_url = notion_url
         if not notion_url:
             logger.warning("[CHAIN] Notion страница не создана")
 
-        # BA (с очередью ответов PM)
         task = await run_ba(task, bot, chat_id, answer_queue)
-
-        # SA (уточняет у BA самостоятельно — без PM)
         task = await run_sa(task, bot, chat_id)
-
-        # QATC (уточняет у SA и BA самостоятельно — без PM)
         task = await run_qatc(task, bot, chat_id)
-
-        # PM
         task = await run_pm(task, bot, chat_id)
 
-        # ТЗ (параллельно)
         tz_results = await asyncio.gather(
-            run_tz_biz(task),
-            run_tz_sys(task),
-            return_exceptions=True,
+            run_tz_biz(task), run_tz_sys(task), return_exceptions=True,
         )
         task.pm_template_1 = tz_results[0] if not isinstance(tz_results[0], Exception) else ""
         task.pm_template_2 = tz_results[1] if not isinstance(tz_results[1], Exception) else ""
 
-        # Упаковка в GDrive
         await notify_packing(bot, chat_id)
         if folder_id:
             upload_ok = await upload_all_artifacts(task)
@@ -304,18 +269,14 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
         else:
             await bot.send_message(chat_id, "❌ GDrive папка недоступна — файлы не загружены.")
 
-        # Notion обновление
         if notion_url:
             await update_feature_page(notion_url, task)
-        else:
-            logger.warning("[CHAIN] Notion URL отсутствует — пропускаем обновление")
 
         await notify_done(bot, chat_id, task)
         logger.info(f"[CHAIN] Завершено: {task.feature_name}")
 
     except InterruptedError as e:
         await bot.send_message(chat_id, f"🛑 Анализ остановлен: {e}")
-        logger.info(f"[CHAIN] Остановлен: {e}")
 
     except Exception as e:
         logger.error(f"[CHAIN] Ошибка: {e}", exc_info=True)
@@ -329,22 +290,8 @@ def main() -> None:
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN не задан")
 
-    logger.info("Запуск @InformNBU_bot...")
-
-    import time
-    import httpx
-
-    try:
-        httpx.get(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook",
-            params={"drop_pending_updates": True},
-            timeout=10,
-        )
-        logger.info("Webhook сброшен")
-    except Exception as e:
-        logger.warning(f"Не удалось сбросить webhook: {e}")
-
-    time.sleep(3)
+    logger.info(f"Запуск @InformNBU_bot | BOT_CHAT_ID={BOT_CHAT_ID}")
+    logger.info(f"RAILWAY_DOMAIN={RAILWAY_DOMAIN} | PORT={PORT}")
 
     app = (
         Application.builder()
@@ -354,39 +301,42 @@ def main() -> None:
         .build()
     )
 
-    # ПОРЯДОК ВАЖЕН: более специфичные хендлеры — первыми
-
-    # 1. Inline-кнопки (варианты ответа)
+    # Порядок важен: специфичные — первыми
     app.add_handler(CallbackQueryHandler(handle_callback_query, pattern="^ba_opt:"))
-
-    # 2. Команды в личке
     app.add_handler(CommandHandler("skip", handle_skip))
     app.add_handler(CommandHandler("stop", handle_stop))
     app.add_handler(CommandHandler("status", handle_status))
-
-    # 3. Текстовые ответы PM из личного чата (ПЕРВЫЙ приоритет для личного чата)
     app.add_handler(MessageHandler(
         filters.TEXT & ~filters.COMMAND & filters.Chat(BOT_CHAT_ID),
         handle_pm_text_reply,
     ))
-
-    # 4. Триггеры фич из групп (и из личного чата если нет активных задач)
     app.add_handler(MessageHandler(
         (filters.TEXT | filters.CAPTION) & ~filters.COMMAND,
         handle_feature_message,
     ))
-
-    # 5. Файлы без подписи
     app.add_handler(MessageHandler(
         (filters.Document.ALL | filters.PHOTO) & ~filters.CAPTION,
         handle_feature_message,
     ))
 
-    logger.info(f"Бот запущен. BOT_CHAT_ID={BOT_CHAT_ID}")
-    app.run_polling(
-        allowed_updates=Update.ALL_TYPES,
-        drop_pending_updates=True,
-    )
+    if RAILWAY_DOMAIN:
+        # ── WEBHOOK режим (Railway production) ────────────────────────────────
+        webhook_url = f"https://{RAILWAY_DOMAIN}{WEBHOOK_PATH}"
+        logger.info(f"Режим: WEBHOOK → {webhook_url}")
+        app.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=WEBHOOK_PATH,
+            webhook_url=webhook_url,
+            drop_pending_updates=True,
+        )
+    else:
+        # ── POLLING режим (локальная разработка) ──────────────────────────────
+        logger.info("Режим: POLLING (локальный)")
+        app.run_polling(
+            allowed_updates=Update.ALL_TYPES,
+            drop_pending_updates=True,
+        )
 
 
 if __name__ == "__main__":
