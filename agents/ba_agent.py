@@ -110,20 +110,26 @@ async def _send_question_with_options(
     question: dict,
     attempt: int,
     total: int,
+    options_cache: dict | None = None,
+    task_id: str | None = None,
 ) -> None:
     """Отправляет вопрос с вариантами ответа (кнопки) если они есть."""
     q_text = question["text"]
     options = question.get("options", [])
+    # Сохраняем варианты в кэш чтобы main.py мог восстановить текст по индексу
+    if options_cache is not None and task_id is not None:
+        options_cache[task_id] = options
 
     header = f"❓ Вопрос BA ({attempt}/{total}):\n\n{q_text}"
 
     if options:
-        # Формируем inline-кнопки для каждого варианта
+        # callback_data ограничен 64 байтами Telegram — передаём только индекс
+        # Текст варианта хранится в глобальном словаре ba_options_cache
         keyboard = []
         for i, opt in enumerate(options):
-            label = f"{chr(65+i)}) {opt[:40]}"  # A) B) C) ...
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"ba_opt:{opt[:100]}")])
-        keyboard.append([InlineKeyboardButton("✍️ Введу свой ответ", callback_data="ba_opt:__custom__")])
+            label = f"{chr(65+i)}) {opt[:40]}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"ba_opt:{i}")])
+        keyboard.append([InlineKeyboardButton("✍️ Введу свой ответ", callback_data="ba_opt:__")])
 
         reply_markup = InlineKeyboardMarkup(keyboard)
         await bot.send_message(
@@ -143,6 +149,7 @@ async def run_ba(
     bot: Bot,
     notify_chat_id: int,
     answer_queue: asyncio.Queue,
+    options_cache: dict | None = None,
 ) -> Task:
     """
     Запускает BA агента.
@@ -188,7 +195,7 @@ async def run_ba(
         # Есть вопросы — отправляем по одному
         question_count += 1
         q = questions[0]  # Берём первый вопрос из списка
-        await _send_question_with_options(bot, notify_chat_id, q, attempt, MAX_QUESTIONS)
+        await _send_question_with_options(bot, notify_chat_id, q, attempt, MAX_QUESTIONS, options_cache, task.task_id)
 
         try:
             answer = await asyncio.wait_for(
