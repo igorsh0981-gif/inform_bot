@@ -263,6 +263,22 @@ def main() -> None:
 
     logger.info("Запуск @InformNBU_bot...")
 
+    import time
+    import httpx
+
+    # Сбрасываем webhook и ждём завершения предыдущего экземпляра
+    try:
+        httpx.get(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/deleteWebhook",
+            params={"drop_pending_updates": True},
+            timeout=10,
+        )
+        logger.info("Webhook сброшен")
+    except Exception as e:
+        logger.warning(f"Не удалось сбросить webhook: {e}")
+
+    time.sleep(3)  # Ждём 3 сек чтобы старый экземпляр завершился
+
     app = (
         Application.builder()
         .token(TELEGRAM_TOKEN)
