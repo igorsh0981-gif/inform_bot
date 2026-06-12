@@ -1,7 +1,7 @@
 """
-SA Agent — System Analyst
-Формирует системный анализ на основе BA артефакта.
-Задаёт вопросы BA только если пробел не помечен как TBD/UNK в BA артефакте.
+SA Agent — System Analyst (профессиональная версия)
+Задаёт вопросы BA только о реально неизвестном (не TBD из артефакта).
+Включает ревью собственного артефакта.
 """
 
 import asyncio
@@ -15,115 +15,161 @@ logger = logging.getLogger(__name__)
 
 MAX_SA_TO_BA_ROUNDS = 2
 
-SA_SYSTEM = """Ты — опытный системный аналитик банковского мобильного приложения (iOS/Android).
+SA_SYSTEM = """Ты — Senior System Analyst с опытом проектирования банковских систем (Java Spring Boot, Kotlin/Swift).
 
-На вход получаешь BA артефакт. Твоя задача: создать полный SA артефакт.
+На вход получаешь BA артефакт. Создай ПРОФЕССИОНАЛЬНЫЙ SA артефакт для мобильного приложения Milliy (НБУ).
 
-## Структура SA артефакта:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## СТРУКТУРА SA АРТЕФАКТА
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ### 1. Архитектурное решение
-- Затрагиваемые микросервисы/модули
-- Новые компоненты которые нужно создать
-- Паттерн взаимодействия (REST/gRPC/Event)
+- Затрагиваемые сервисы (iABS, MUNIS, transfer-service, notification-service и др.)
+- Новые компоненты: название, ответственность, тип (microservice/module/lib)
+- Паттерн: REST / gRPC / Event-driven (Kafka), обоснование выбора
+- Диаграмма зависимостей (текстовая: A → B → C)
 
-### 2. API контракты
-- Endpoint'ы (метод, путь, request/response)
-- Коды ответов и обработка ошибок
-- Авторизация и аутентификация
+### 2. API контракты (OpenAPI-style)
+Для каждого endpoint:
+```
+[METHOD] /api/v1/[path]
+Auth: Bearer JWT
+Request: { поля с типами и валидацией }
+Response 200: { структура ответа }
+Response 4xx/5xx: { код, message, errorCode }
+```
+Минимум 3 endpoint'а для любой фичи.
 
 ### 3. Модель данных
-- Новые таблицы/коллекции
-- Изменения в существующих схемах
-- Индексы и связи
+```sql
+-- Новые таблицы
+CREATE TABLE [name] (
+  id UUID PRIMARY KEY,
+  ...
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+-- Индексы
+CREATE INDEX ...
+```
+Изменения в существующих таблицах — ALTER TABLE с обоснованием.
 
 ### 4. Sequence диаграмма
-- Текстовое описание потока взаимодействия компонентов
-- Шаги: клиент → API Gateway → сервис → БД → ответ
+```
+Mobile App
+  → API Gateway (auth, rate-limit)
+    → [Service] (бизнес-логика)
+      → PostgreSQL (запись)
+      → Redis (кэш, TTL=X)
+      → [External] iABS/MUNIS (если нужно)
+    ← [Service] response
+  ← API Gateway
+← Mobile App (UI update)
+```
 
 ### 5. Нефункциональные требования
-- Производительность (RPS, latency)
-- Безопасность (шифрование, маскирование данных)
-- Масштабируемость
+| Параметр | Требование | Обоснование |
+|---|---|---|
+| Response time P95 | < 500ms | банковский стандарт |
+| Throughput | X RPS | расчёт от DAU |
+| Availability | 99.9% | SLA НБУ |
+| Data retention | X дней | регуляторное требование |
 
-### 6. Оценка трудоёмкости
-- Backend разработка: X дней
-- Frontend разработка: X дней
-- Тестирование: X дней
-- Итого: X дней
+### 6. Безопасность
+- Аутентификация: JWT + refresh token / mTLS для межсервисного
+- Авторизация: RBAC роли (client / operator / admin)
+- Маскирование данных в логах: номера карт, суммы
+- Audit log: какие события пишем, формат
 
-## ВАЖНЫЕ правила:
-- Стек: Java Spring Boot (backend), Kotlin/Swift (mobile), PostgreSQL, Redis
-- Поля помеченные [TBD] или [UNK] в BA артефакте — принимай как [ASSUMED] с разумным допущением, НЕ задавай по ним вопросы
-- Вопрос к BA — ТОЛЬКО если отсутствует информация критичная для архитектуры И она НЕ помечена TBD/UNK в BA
-- Если нужен вопрос — добавь в конце:
+### 7. Оценка трудоёмкости
+| Компонент | Backend (дни) | Mobile iOS (дни) | Mobile Android (дни) | QA (дни) |
+|---|---|---|---|---|
+| [компонент 1] | X | X | X | X |
+| **Итого** | **X** | **X** | **X** | **X** |
+
+### 8. Риски реализации
+| Риск | Вероятность | Влияние | Митигация |
+|---|---|---|---|
+| [риск] | H/M/L | H/M/L | [действие] |
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+## ПРАВИЛА
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Стек: Java 17 Spring Boot 3 (backend), Kotlin (Android), Swift (iOS), PostgreSQL 15, Redis 7, Kafka
+- Поля [TBD]/[UNK] из BA — принимай как [ASSUMED] с разумным банковским допущением
+- Вопрос к BA только если архитектурное решение принципиально зависит от ответа И это не TBD
+- Если нужен вопрос, добавь в конце:
   ## ВОПРОС_К_BA:
-  [один конкретный вопрос, заканчивается на ?]
-- МАКСИМУМ ОДИН вопрос за итерацию. Если пробелов нет — секцию не добавляй.
-- Пиши на русском языке
+  [один конкретный вопрос]?
+- Пиши на русском, термины API/SQL — на английском
 """
 
-BA_ANSWER_SYSTEM = """Ты — опытный бизнес-аналитик банковского мобильного приложения.
+BA_ANSWER_SYSTEM = """Ты — Senior BA банковского мобильного приложения.
+Отвечай на вопрос SA коротко и конкретно (максимум 3 предложения).
+Опирайся на банковскую практику НБУ. Если точных данных нет — дай лучшее [ASSUMED] допущение.
+Не говори что вопрос помечен TBD — просто дай ответ.
+"""
 
-Тебе задаёт вопрос системный аналитик (SA).
-Ответь коротко и конкретно на основе имеющегося контекста задачи.
-Если информации нет — дай наиболее разумное допущение и пометь [ASSUMED].
-НЕ отвечай что вопрос помечен TBD — просто дай лучшее допущение.
-Пиши на русском языке. Максимум 3 абзаца.
+SA_REVIEWER_SYSTEM = """Ты — архитектор банковских систем. Проверь SA артефакт.
+Верни ТОЛЬКО JSON:
+{
+  "score": 0-100,
+  "approved": true/false,
+  "issues": ["issue1"],
+  "improvements": ["улучшение 1"]
+}
+Критерии: API контракты полные (0-20), модель данных есть (0-20),
+sequence диаграмма (0-20), NFR с числами (0-20), оценка трудоёмкости (0-20).
+approved=true если score >= 75.
 """
 
 
 def _extract_sa_question(text: str) -> str | None:
-    match = re.search(r"##\s*ВОПРОС_К_BA:(.*?)(?=##|$)", text, re.DOTALL | re.IGNORECASE)
+    match = re.search(r"##\s*ВОПРОС_К_BA:(.*?)(?=##|\Z)", text, re.DOTALL | re.IGNORECASE)
     if not match:
         return None
-    q = match.group(1).strip()
-    if not q or len(q) < 5:
-        return None
-    if not q.endswith("?"):
-        q += "?"
-    return q
+    q = match.group(1).strip().rstrip("?") + "?"
+    return q if len(q) > 6 else None
 
 
 def _clean_sa_artifact(text: str) -> str:
-    return re.sub(
-        r"##\s*ВОПРОС_К_BA:.*?(?=##|$)", "", text, flags=re.DOTALL | re.IGNORECASE
-    ).strip()
+    return re.sub(r"##\s*ВОПРОС_К_BA:.*?(?=##|\Z)", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
 
 
 async def _ask_ba(question: str, task: Task) -> str:
     user_text = (
-        f"## Исходный запрос:\n{task.raw_message}\n\n"
+        f"## Контекст фичи:\n{task.raw_message}\n\n"
         f"## BA артефакт:\n{task.ba_text}\n\n"
         f"## Вопрос от SA:\n{question}"
     )
-    logger.info(f"[SA→BA] Вопрос: {question[:80]}")
+    logger.info(f"[SA→BA] {question[:80]}")
     try:
-        answer = await call_claude(BA_ANSWER_SYSTEM, user_text, max_tokens=512, timeout=45)
-        logger.info(f"[SA→BA] Ответ: {answer[:80]}")
+        answer = await call_claude(BA_ANSWER_SYSTEM, user_text, max_tokens=256, timeout=40)
+        logger.info(f"[SA→BA] ответ: {answer[:80]}")
         return answer.strip()
     except Exception as e:
-        logger.error(f"[SA→BA] Ошибка: {e}")
-        return "[ASSUMED] Нет данных — использую разумное допущение"
+        logger.error(f"[SA→BA] ошибка: {e}")
+        return "[ASSUMED] Используй стандартную банковскую практику"
 
 
 async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
-    logger.info(f"SA старт | задача: {task.feature_name}")
+    logger.info(f"SA старт | {task.feature_name}")
 
     base_text = (
         f"## BA Артефакт:\n{task.ba_text}\n\n"
         f"## Исходный запрос:\n{task.raw_message}\n\n"
-        f"## Figma описание:\n{task.figma_content or 'Не предоставлено'}"
+        f"## Figma:\n{task.figma_content or 'Не предоставлено'}"
     )
 
     clarifications = []
-    prev_question = None  # защита от повтора одного вопроса
+    prev_question = None
+    response = ""
 
     for round_num in range(1, MAX_SA_TO_BA_ROUNDS + 2):
         user_text = base_text
         if clarifications:
             user_text += "\n\n## Уточнения от BA:\n" + "\n\n".join(clarifications)
         if round_num > MAX_SA_TO_BA_ROUNDS:
-            user_text += "\n\n[ИНСТРУКЦИЯ: Вопросов больше не задавай. Финальный артефакт с [ASSUMED] для всего неясного.]"
+            user_text += "\n\n[ИНСТРУКЦИЯ: Финальный прогон. Вопросов не задавай. [ASSUMED] для всего неясного.]"
 
         content = build_content_with_attachment(user_text, task)
         try:
@@ -134,35 +180,50 @@ async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
 
         question = _extract_sa_question(response)
 
-        # Нет вопроса, лимит исчерпан, или повтор вопроса — финал
+        # Нет вопроса, финальный прогон, или повтор → выходим
         if not question or round_num > MAX_SA_TO_BA_ROUNDS or question == prev_question:
-            task.sa_text = _clean_sa_artifact(response)
-            task.sa_summary = _extract_summary(response)
-            if clarifications:
-                task.sa_text += f"\n\n---\n*SA уточнял у BA: {len(clarifications)} раз(а)*"
-            await notify_sa_done(bot, notify_chat_id, task.sa_summary)
-            logger.info(f"SA завершён (раундов: {len(clarifications)})")
-            return task
+            break
 
         prev_question = question
-
         await bot.send_message(
-            chat_id=notify_chat_id,
-            text=f"🔄 SA → BA ({round_num}/{MAX_SA_TO_BA_ROUNDS}):\n\n_{question}_",
-            parse_mode="Markdown",
+            notify_chat_id,
+            f"🔄 SA → BA ({round_num}/{MAX_SA_TO_BA_ROUNDS}):\n{question}",
         )
-
         ba_answer = await _ask_ba(question, task)
         clarifications.append(f"SA: {question}\nBA: {ba_answer}")
-
         await bot.send_message(
-            chat_id=notify_chat_id,
-            text=f"✅ BA → SA:\n{ba_answer[:400]}{'...' if len(ba_answer) > 400 else ''}",
+            notify_chat_id,
+            f"✅ BA → SA:\n{ba_answer[:300]}{'...' if len(ba_answer)>300 else ''}",
         )
 
-    # Запасной финал
-    task.sa_text = task.sa_text or _clean_sa_artifact(response)
-    task.sa_summary = task.sa_summary or _extract_summary(response)
+    artifact = _clean_sa_artifact(response)
+
+    # Ревью
+    await bot.send_message(notify_chat_id, "🔍 Проверяю качество SA артефакта...")
+    try:
+        import json
+        raw_review = await call_claude(SA_REVIEWER_SYSTEM, artifact, max_tokens=512, timeout=40)
+        clean = re.sub(r"```(?:json)?|```", "", raw_review).strip()
+        review = json.loads(clean)
+        score = review.get("score", 0)
+        if not review.get("approved") and review.get("improvements"):
+            imps = "\n".join(f"- {i}" for i in review["improvements"])
+            improved_text = (
+                f"{base_text}\n\n## Черновик SA:\n{artifact}\n\n"
+                f"## Улучшения (score={score}/100):\n{imps}\n\n"
+                f"[ИНСТРУКЦИЯ: Улучши артефакт. Вопросов не задавай.]"
+            )
+            content = build_content_with_attachment(improved_text, task)
+            improved = await call_claude(SA_SYSTEM, content, max_tokens=8192)
+            artifact = _clean_sa_artifact(improved)
+            logger.info(f"SA улучшен после ревью (score={score})")
+    except Exception as e:
+        score = 0
+        logger.warning(f"SA ревью не удалось: {e}")
+
+    task.sa_text = artifact
+    task.sa_summary = _extract_summary(artifact)
+    await bot.send_message(notify_chat_id, f"✅ SA завершён (уточнений: {len(clarifications)}, качество: {score}/100)")
     await notify_sa_done(bot, notify_chat_id, task.sa_summary)
     return task
 
