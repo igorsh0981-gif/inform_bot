@@ -1,8 +1,7 @@
 """
 SA Agent — System Analyst
 Формирует системный анализ на основе BA артефакта.
-Если есть пробелы — задаёт вопросы BA агенту (через Claude, без участия PM).
-PM получает только уведомление о ходе.
+Задаёт вопросы BA только если пробел не помечен как TBD/UNK в BA артефакте.
 """
 
 import asyncio
@@ -14,9 +13,8 @@ from services.notifier import notify_sa_done
 
 logger = logging.getLogger(__name__)
 
-MAX_SA_TO_BA_ROUNDS = 2   # SA может спросить BA максимум 2 раза
+MAX_SA_TO_BA_ROUNDS = 2
 
-# ── SA: основной промпт ────────────────────────────────────────────────────────
 SA_SYSTEM = """Ты — опытный системный аналитик банковского мобильного приложения (iOS/Android).
 
 На вход получаешь BA артефакт. Твоя задача: создать полный SA артефакт.
@@ -53,27 +51,28 @@ SA_SYSTEM = """Ты — опытный системный аналитик ба�
 - Тестирование: X дней
 - Итого: X дней
 
-## Правила:
+## ВАЖНЫЕ правила:
 - Стек: Java Spring Boot (backend), Kotlin/Swift (mobile), PostgreSQL, Redis
-- Если в BA артефакте есть КРИТИЧЕСКИЙ пробел блокирующий архитектуру — добавь в конце секцию:
+- Поля помеченные [TBD] или [UNK] в BA артефакте — принимай как [ASSUMED] с разумным допущением, НЕ задавай по ним вопросы
+- Вопрос к BA — ТОЛЬКО если отсутствует информация критичная для архитектуры И она НЕ помечена TBD/UNK в BA
+- Если нужен вопрос — добавь в конце:
   ## ВОПРОС_К_BA:
   [один конкретный вопрос, заканчивается на ?]
-- МАКСИМУМ ОДИН вопрос за раз. Если пробелов нет — секцию не добавляй.
+- МАКСИМУМ ОДИН вопрос за итерацию. Если пробелов нет — секцию не добавляй.
 - Пиши на русском языке
 """
 
-# ── BA: промпт для ответа на вопросы SA ───────────────────────────────────────
 BA_ANSWER_SYSTEM = """Ты — опытный бизнес-аналитик банковского мобильного приложения.
 
-Тебе задаёт вопрос системный аналитик (SA). 
+Тебе задаёт вопрос системный аналитик (SA).
 Ответь коротко и конкретно на основе имеющегося контекста задачи.
-Если информации недостаточно — дай наиболее разумное допущение и пометь [ASSUMED].
-Пиши на русском языке.
+Если информации нет — дай наиболее разумное допущение и пометь [ASSUMED].
+НЕ отвечай что вопрос помечен TBD — просто дай лучшее допущение.
+Пиши на русском языке. Максимум 3 абзаца.
 """
 
 
 def _extract_sa_question(text: str) -> str | None:
-    """Извлекает вопрос SA к BA из артефакта."""
     match = re.search(r"##\s*ВОПРОС_К_BA:(.*?)(?=##|$)", text, re.DOTALL | re.IGNORECASE)
     if not match:
         return None
@@ -86,90 +85,79 @@ def _extract_sa_question(text: str) -> str | None:
 
 
 def _clean_sa_artifact(text: str) -> str:
-    """Убирает секцию вопроса из финального артефакта."""
     return re.sub(
         r"##\s*ВОПРОС_К_BA:.*?(?=##|$)", "", text, flags=re.DOTALL | re.IGNORECASE
     ).strip()
 
 
-async def _ask_ba(question: str, task: Task, ba_context: str) -> str:
-    """
-    SA задаёт вопрос BA агенту.
-    BA отвечает через отдельный вызов Claude с контекстом исходного запроса.
-    """
+async def _ask_ba(question: str, task: Task) -> str:
     user_text = (
-        f"## Исходный запрос на фичу:\n{task.raw_message}\n\n"
-        f"## BA артефакт:\n{ba_context}\n\n"
-        f"## Вопрос от системного аналитика (SA):\n{question}"
+        f"## Исходный запрос:\n{task.raw_message}\n\n"
+        f"## BA артефакт:\n{task.ba_text}\n\n"
+        f"## Вопрос от SA:\n{question}"
     )
     logger.info(f"[SA→BA] Вопрос: {question[:80]}")
     try:
-        answer = await call_claude(BA_ANSWER_SYSTEM, user_text, max_tokens=1024, timeout=60)
-        logger.info(f"[SA→BA] Ответ BA: {answer[:80]}")
+        answer = await call_claude(BA_ANSWER_SYSTEM, user_text, max_tokens=512, timeout=45)
+        logger.info(f"[SA→BA] Ответ: {answer[:80]}")
         return answer.strip()
     except Exception as e:
-        logger.error(f"[SA→BA] Ошибка ответа BA: {e}")
-        return "[ASSUMED] Ответ BA недоступен — продолжаю с допущениями"
+        logger.error(f"[SA→BA] Ошибка: {e}")
+        return "[ASSUMED] Нет данных — использую разумное допущение"
 
 
 async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
-    """
-    Запускает SA агента.
-    SA самостоятельно уточняет у BA если нужно (без участия PM).
-    """
     logger.info(f"SA старт | задача: {task.feature_name}")
 
-    ba_context = task.ba_text or task.raw_message
-    clarifications = []  # накопленные ответы BA на вопросы SA
+    base_text = (
+        f"## BA Артефакт:\n{task.ba_text}\n\n"
+        f"## Исходный запрос:\n{task.raw_message}\n\n"
+        f"## Figma описание:\n{task.figma_content or 'Не предоставлено'}"
+    )
+
+    clarifications = []
+    prev_question = None  # защита от повтора одного вопроса
 
     for round_num in range(1, MAX_SA_TO_BA_ROUNDS + 2):
-        # Собираем контекст для SA
-        user_text = (
-            f"## BA Артефакт:\n{ba_context}\n\n"
-            f"## Исходный запрос:\n{task.raw_message}\n\n"
-            f"## Figma описание:\n{task.figma_content or 'Не предоставлено'}"
-        )
+        user_text = base_text
         if clarifications:
-            user_text += "\n\n## Уточнения от BA (по запросу SA):\n" + "\n\n".join(clarifications)
+            user_text += "\n\n## Уточнения от BA:\n" + "\n\n".join(clarifications)
         if round_num > MAX_SA_TO_BA_ROUNDS:
-            user_text += "\n\n[ИНСТРУКЦИЯ: Вопросов больше не задавай. Сформируй финальный артефакт с допущениями [ASSUMED] для неясного.]"
+            user_text += "\n\n[ИНСТРУКЦИЯ: Вопросов больше не задавай. Финальный артефакт с [ASSUMED] для всего неясного.]"
 
         content = build_content_with_attachment(user_text, task)
-
         try:
             response = await call_claude(SA_SYSTEM, content, max_tokens=8192)
         except Exception as e:
-            logger.error(f"SA Claude ошибка (round {round_num}): {e}")
+            logger.error(f"SA ошибка round {round_num}: {e}")
             raise
 
         question = _extract_sa_question(response)
 
-        # Нет вопроса или исчерпали лимит — финализируем
-        if not question or round_num > MAX_SA_TO_BA_ROUNDS:
+        # Нет вопроса, лимит исчерпан, или повтор вопроса — финал
+        if not question or round_num > MAX_SA_TO_BA_ROUNDS or question == prev_question:
             task.sa_text = _clean_sa_artifact(response)
             task.sa_summary = _extract_summary(response)
             if clarifications:
-                task.sa_text += f"\n\n---\n*SA запросил уточнения у BA: {len(clarifications)} раз(а)*"
+                task.sa_text += f"\n\n---\n*SA уточнял у BA: {len(clarifications)} раз(а)*"
             await notify_sa_done(bot, notify_chat_id, task.sa_summary)
-            logger.info(f"SA завершён (раундов с BA: {len(clarifications)})")
+            logger.info(f"SA завершён (раундов: {len(clarifications)})")
             return task
 
-        # Есть вопрос — SA спрашивает BA напрямую (без PM)
+        prev_question = question
+
         await bot.send_message(
             chat_id=notify_chat_id,
-            text=(
-                f"🔄 SA запрашивает уточнение у BA ({round_num}/{MAX_SA_TO_BA_ROUNDS}):\n\n"
-                f"_{question}_"
-            ),
+            text=f"🔄 SA → BA ({round_num}/{MAX_SA_TO_BA_ROUNDS}):\n\n_{question}_",
             parse_mode="Markdown",
         )
 
-        ba_answer = await _ask_ba(question, task, ba_context)
-        clarifications.append(f"SA спросил: {question}\nBA ответил: {ba_answer}")
+        ba_answer = await _ask_ba(question, task)
+        clarifications.append(f"SA: {question}\nBA: {ba_answer}")
 
         await bot.send_message(
             chat_id=notify_chat_id,
-            text=f"✅ BA ответил SA:\n\n{ba_answer[:500]}{'...' if len(ba_answer) > 500 else ''}",
+            text=f"✅ BA → SA:\n{ba_answer[:400]}{'...' if len(ba_answer) > 400 else ''}",
         )
 
     # Запасной финал
