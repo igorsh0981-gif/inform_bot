@@ -198,9 +198,6 @@ async def _send_questions_block(
         await bot.send_message(chat_id=chat_id, text=text)
 
 
-async def _review_artifact(artifact: str, task: Task) -> dict:
-    """Ревью через общий модуль."""
-    return await review_artifact(artifact, "BA")
 
 
 async def _wait_answer(
@@ -304,3 +301,9 @@ async def run_ba(
     await notify_ba_done(bot, notify_chat_id, task.ba_summary)
     logger.info(f"BA фінал | раундов={len(qa_rounds)}")
     return task
+
+
+def _extract_summary(text: str) -> str:
+    lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
+    summary = " ".join(lines[:3])
+    return summary[:200] + "..." if len(summary) > 200 else summary
