@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -68,7 +68,7 @@ class Task:
         """Создаёт Task из JSON переданного inform_bot"""
         return cls(
             task_id=str(payload.get("task_id", "")),
-            timestamp=payload.get("timestamp", datetime.utcnow().isoformat()),
+            timestamp=payload.get("timestamp", datetime.now(timezone.utc).isoformat()),
             feature_name=payload.get("feature_name", ""),
             raw_message=payload.get("raw_message", ""),
             summary=payload.get("summary", ""),
