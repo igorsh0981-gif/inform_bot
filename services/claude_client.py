@@ -76,7 +76,7 @@ async def call_claude(
     raise last_error or RuntimeError("Claude API недоступен после всех попыток")
 
 
-def build_content_with_attachment(text: str, task) -> list:
+def build_content_with_attachment(text: str, task: "Task") -> list:
     content = [{"type": "text", "text": text}]
 
     if task.attachment_base64 and task.attachment_mime:
