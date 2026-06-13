@@ -219,41 +219,68 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/skip [task_id] — пропустить вопрос. Если несколько задач — укажи ID."""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
     if not answer_queues:
         await message.reply_text("⚠️ Нет активных задач.")
         return
-    task_id = list(answer_queues.keys())[-1]
-    queue = answer_queues[task_id]
-    if len(answer_queues) > 1:
-        tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
-        await message.reply_text(
-            f"⚠️ Несколько активных задач ({len(answer_queues)}): {tasks_list}\n"
-            f"Применяю к последней: #{task_id}"
-        )
-    await queue.put("[SKIP — пользователь пропустил вопрос]")
-    await message.reply_text(f"⏩ Вопрос пропущен для задачи #{task_id}")
+
+    # Если передан task_id как аргумент: /skip -1003963999739_162
+    target_id = None
+    if context.args:
+        arg = context.args[0].lstrip("#")
+        if arg in answer_queues:
+            target_id = arg
+        else:
+            await message.reply_text(f"⚠️ Задача #{arg} не найдена.\nАктивные: {', '.join(f'#{t}' for t in answer_queues)}")
+            return
+
+    if target_id is None:
+        if len(answer_queues) > 1:
+            tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
+            await message.reply_text(
+                f"⚠️ Несколько активных задач: {tasks_list}\n"
+                f"Укажи ID: /skip {list(answer_queues.keys())[0]}"
+            )
+            return
+        target_id = list(answer_queues.keys())[-1]
+
+    await answer_queues[target_id].put("[SKIP — пользователь пропустил вопрос]")
+    await message.reply_text(f"⏩ Вопрос пропущен для задачи #{target_id}")
 
 
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/stop [task_id] — остановить анализ. Если несколько задач — укажи ID."""
     message = update.message
     if not message or message.chat.id != BOT_CHAT_ID:
         return
     if not answer_queues:
         await message.reply_text("⚠️ Нет активных задач.")
         return
-    task_id = list(answer_queues.keys())[-1]
-    queue = answer_queues[task_id]
-    if len(answer_queues) > 1:
-        tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
-        await message.reply_text(
-            f"⚠️ Несколько активных задач ({len(answer_queues)}): {tasks_list}\n"
-            f"Останавливаю последнюю: #{task_id}"
-        )
-    await queue.put("[STOP — пользователь остановил анализ]")
-    await message.reply_text(f"🛑 Анализ задачи #{task_id} остановлен.")
+
+    target_id = None
+    if context.args:
+        arg = context.args[0].lstrip("#")
+        if arg in answer_queues:
+            target_id = arg
+        else:
+            await message.reply_text(f"⚠️ Задача #{arg} не найдена.\nАктивные: {', '.join(f'#{t}' for t in answer_queues)}")
+            return
+
+    if target_id is None:
+        if len(answer_queues) > 1:
+            tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
+            await message.reply_text(
+                f"⚠️ Несколько активных задач: {tasks_list}\n"
+                f"Укажи ID: /stop {list(answer_queues.keys())[0]}"
+            )
+            return
+        target_id = list(answer_queues.keys())[-1]
+
+    await answer_queues[target_id].put("[STOP — пользователь остановил анализ]")
+    await message.reply_text(f"🛑 Анализ задачи #{target_id} остановлен.")
 
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
