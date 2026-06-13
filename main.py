@@ -325,6 +325,97 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
         ba_options_cache.pop(task.task_id, None)
 
 
+async def handle_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/help и /menu — справка по боту"""
+    message = update.message
+    if not message:
+        return
+
+    text = """🤖 *@InformNBU_bot — Оркестратор анализа фич*
+
+━━━━━━━━━━━━━━━━━━━━━━
+📋 *ТРИГГЕРЫ В ГРУППОВЫХ ЧАТАХ*
+Бот автоматически запускает анализ если сообщение содержит:
+
+• `фича` / `feature`
+• `реализовать` / `реализация`
+• `разработать` / `разработка`
+• `добавить функционал` / `добавить функцию`
+• `нужна функция` / `нужен функционал`
+• `доработка` / `доработать`
+• `внедрить` / `внедрение`
+• `нужно реализовать`
+• `требуется реализовать`
+• `запрос на разработку`
+• `новый функционал`
+
+━━━━━━━━━━━━━━━━━━━━━━
+🚀 *РУЧНОЙ ЗАПУСК*
+`/analyze <описание фичи>` — запустить анализ вручную
+Пример: `/analyze добавить биометрическую аутентификацию в Milliy`
+
+━━━━━━━━━━━━━━━━━━━━━━
+⚙️ *УПРАВЛЕНИЕ АНАЛИЗОМ*
+`/skip` — пропустить текущий вопрос BA
+`/stop` — остановить анализ
+`/status` — активные задачи
+
+━━━━━━━━━━━━━━━━━━━━━━
+ℹ️ *ПРИМЕЧАНИЕ*
+Вопросы со знаками `?`, `как`, `почему`, `зачем` без явного триггера анализ не запускают."""
+
+    await message.reply_text(text, parse_mode="Markdown")
+
+
+async def handle_analyze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/analyze <описание> — ручной запуск анализа из личного чата или группы"""
+    message = update.message
+    if not message:
+        return
+
+    # Получаем текст после /analyze
+    raw_text = " ".join(context.args) if context.args else ""
+
+    if not raw_text.strip():
+        await message.reply_text(
+            "⚠️ Укажите описание фичи.\n"
+            "Пример: `/analyze добавить биометрическую аутентификацию в Milliy`",
+            parse_mode="Markdown"
+        )
+        return
+
+    # Подменяем message.text и запускаем стандартную обработку
+    # Создаём задачу напрямую
+    from datetime import datetime, timezone
+    from models.task import Task
+    from services.parser import extract_feature
+    from services.sheets import append_task
+    from services.notifier import notify_self
+
+    task = Task(
+        task_id=f"{message.chat.id}_{message.message_id}",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        raw_message=raw_text,
+        author_username=f"@{message.from_user.username}" if message.from_user.username else "",
+        author_name=f"{message.from_user.first_name or ''} {message.from_user.last_name or ''}".strip(),
+        chat_id=message.chat.id,
+        chat_name=message.chat.title or "private",
+        chat_type=message.chat.type,
+    )
+
+    parsed = await extract_feature(raw_text, None)
+    task.feature_name = parsed.get("feature_name", raw_text[:50])
+    task.summary = parsed.get("summary", raw_text[:300])
+
+    await notify_self(context.bot, task)
+    task.status = "in_progress"
+    await append_task(task)
+
+    answer_queue = asyncio.Queue()
+    answer_queues[task.task_id] = answer_queue
+    asyncio.create_task(run_chain(task, context.bot, answer_queue))
+
+
 def main() -> None:
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN не задан")
@@ -342,6 +433,9 @@ def main() -> None:
 
     # Порядок важен: специфичные — первыми
     app.add_handler(CallbackQueryHandler(handle_callback_query, pattern="^ba_opt:"))
+    app.add_handler(CommandHandler("help", handle_help))
+    app.add_handler(CommandHandler("menu", handle_help))
+    app.add_handler(CommandHandler("analyze", handle_analyze))
     app.add_handler(CommandHandler("skip", handle_skip))
     app.add_handler(CommandHandler("stop", handle_stop))
     app.add_handler(CommandHandler("status", handle_status))
