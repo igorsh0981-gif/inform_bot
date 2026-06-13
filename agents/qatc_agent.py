@@ -163,7 +163,7 @@ async def run_qatc(task: Task, bot, notify_chat_id: int, answer_queue=None) -> T
                 pass  # очередь пуста — продолжаем
 
         try:
-            response = await call_claude(QATC_SYSTEM, user_text, max_tokens=8192)
+            response = await call_claude(QATC_SYSTEM, user_text, max_tokens=16000)
         except Exception as e:
             logger.error(f"QATC ошибка round {round_num}: {e}")
             raise
