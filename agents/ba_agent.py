@@ -254,7 +254,7 @@ async def run_ba(
         content = build_content_with_attachment(user_text, task)
 
         try:
-            response = await call_claude(BA_SYSTEM, content, max_tokens=8192)
+            response = await call_claude(BA_SYSTEM, content, max_tokens=16000)
         except Exception as e:
             logger.error(f"BA Claude ошибка (round {round_num}): {e}")
             raise
