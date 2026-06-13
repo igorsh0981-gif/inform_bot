@@ -16,6 +16,7 @@ import re
 
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from models.task import Task
+from services.utils import extract_summary
 from services.claude_client import call_claude, build_content_with_attachment
 from services.notifier import notify_ba_timeout, notify_ba_done
 
@@ -186,7 +187,7 @@ async def _send_questions_block(
     if len(questions) == 1 and first_options:
         options_cache[task_id] = first_options
         keyboard = [
-            [InlineKeyboardButton(f"{chr(65+i)}) {opt[:40]}", callback_data=f"ba_opt:{i}")]
+            [InlineKeyboardButton(f"{chr(65+i)}) {opt[:40]}", callback_data=f"ba_opt:{task_id}:{i}")]
             for i, opt in enumerate(first_options)
         ]
         keyboard.append([InlineKeyboardButton("✍️ Свой ответ", callback_data="ba_opt:__")])
@@ -293,17 +294,11 @@ async def run_ba(
     artifact = _clean_artifact(response)
 
     task.ba_text = artifact
-    task.ba_summary = _extract_summary(artifact)
+    task.ba_summary = extract_summary(artifact)
     task.ba_questions_count = len(qa_rounds)
     task.ba_answers = [r["answer"] for r in qa_rounds]
 
-    await bot.send_message(notify_chat_id, f"✅ BA завершён (раундів уточнень: {len(qa_rounds)})")
+    await bot.send_message(notify_chat_id, f"✅ BA завершён (раундов уточнений: {len(qa_rounds)})")
     await notify_ba_done(bot, notify_chat_id, task.ba_summary)
-    logger.info(f"BA фінал | раундов={len(qa_rounds)}")
+    logger.info(f"BA финал | раундов={len(qa_rounds)}")
     return task
-
-
-def _extract_summary(text: str) -> str:
-    lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
-    summary = " ".join(lines[:3])
-    return summary[:200] + "..." if len(summary) > 200 else summary
