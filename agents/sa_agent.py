@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 from models.task import Task
+from services.utils import extract_summary
 from services.claude_client import call_claude, build_content_with_attachment
 from services.notifier import notify_sa_done
 
@@ -138,7 +139,7 @@ async def _ask_ba(question: str, task: Task) -> str:
         return "[ASSUMED] Используй стандартную банковскую практику"
 
 
-async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
+async def run_sa(task: Task, bot, notify_chat_id: int, answer_queue=None) -> Task:
     logger.info(f"SA старт | {task.feature_name}")
 
     base_text = (
@@ -157,6 +158,16 @@ async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
             user_text += "\n\n## Уточнения от BA:\n" + "\n\n".join(clarifications)
         if round_num > MAX_SA_TO_BA_ROUNDS:
             user_text += "\n\n[ИНСТРУКЦИЯ: Финальный прогон. Вопросов не задавай. [ASSUMED] для всего неясного.]"
+
+        # Проверяем STOP перед вызовом Claude
+        if answer_queue:
+            try:
+                msg = answer_queue.get_nowait()
+                if "[STOP" in msg:
+                    raise InterruptedError("Пользователь остановил анализ")
+                answer_queue.put_nowait(msg)  # возвращаем если не STOP
+            except asyncio.QueueEmpty:
+                pass  # очередь пуста — продолжаем
 
         content = build_content_with_attachment(user_text, task)
         try:
@@ -186,13 +197,7 @@ async def run_sa(task: Task, bot, notify_chat_id: int) -> Task:
     artifact = _clean_sa_artifact(response)
 
     task.sa_text = artifact
-    task.sa_summary = _extract_summary(artifact)
+    task.sa_summary = extract_summary(artifact)
     await bot.send_message(notify_chat_id, f"✅ SA завершён (уточнений у BA: {len(clarifications)})")
     await notify_sa_done(bot, notify_chat_id, task.sa_summary)
     return task
-
-
-def _extract_summary(text: str) -> str:
-    lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
-    summary = " ".join(lines[:3])
-    return summary[:200] + "..." if len(summary) > 200 else summary
