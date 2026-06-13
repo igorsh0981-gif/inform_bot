@@ -171,7 +171,7 @@ async def run_sa(task: Task, bot, notify_chat_id: int, answer_queue=None) -> Tas
 
         content = build_content_with_attachment(user_text, task)
         try:
-            response = await call_claude(SA_SYSTEM, content, max_tokens=8192)
+            response = await call_claude(SA_SYSTEM, content, max_tokens=16000)
         except Exception as e:
             logger.error(f"SA ошибка round {round_num}: {e}")
             raise
