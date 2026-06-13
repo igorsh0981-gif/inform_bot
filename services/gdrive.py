@@ -97,8 +97,8 @@ async def _upload_via_webhook(folder_id: str, filename: str, content_b64: str) -
 
 
 async def upload_text_file(folder_id: str, filename: str, content: str) -> str:
-    # Шлём plain text — n8n конвертирует через toBinary
-    return await _upload_via_webhook(folder_id, filename, content)
+    b64 = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    return await _upload_via_webhook(folder_id, filename, b64)
 
 
 async def upload_bytes_file(folder_id: str, filename: str, content: bytes, mimetype: str) -> str:
@@ -130,11 +130,8 @@ async def upload_all_artifacts(task) -> bool:
 
     files_md = [
         (f"ba_{fn}_{tid}.md",             task.ba_text),
-        (f"ba_full_{fn}_{tid}.md",        task.ba_text),
         (f"sa_{fn}_{tid}.md",             task.sa_text),
-        (f"sa_full_{fn}_{tid}.md",        task.sa_text),
         (f"qatc_{fn}_{tid}.md",           task.qatc_text),
-        (f"qatc_full_{fn}_{tid}.md",      task.qatc_text),
         (f"pm_protocol_{fn}_{tid}.md",    task.pm_protocol),
         (f"pm_jira_{fn}_{tid}.md",        task.pm_jira),
         (f"pm_epics_{fn}_{tid}.md",       task.pm_epics),
