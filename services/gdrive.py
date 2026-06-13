@@ -21,9 +21,9 @@ N8N_GDRIVE_WEBHOOK = os.getenv(
 import io
 import json
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
 from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials
+from models.task import Task
 
 SCOPES = ["https://www.googleapis.com/auth/drive"]
 
@@ -106,7 +106,7 @@ async def upload_bytes_file(folder_id: str, filename: str, content: bytes, mimet
     return await _upload_via_webhook(folder_id, filename, b64)
 
 
-async def upload_all_artifacts(task) -> bool:
+async def upload_all_artifacts(task: Task) -> bool:
     fid = task.gdrive_feature_folder_id
     tid = task.task_id
     fn = task.feature_name[:40].replace(" ", "_").replace("/", "-")
