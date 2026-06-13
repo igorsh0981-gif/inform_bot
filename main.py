@@ -316,8 +316,8 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
             logger.warning("[CHAIN] Notion страница не создана")
 
         task = await run_ba(task, bot, chat_id, answer_queue, ba_options_cache)
-        task = await run_sa(task, bot, chat_id, answer_queue)
-        task = await run_qatc(task, bot, chat_id, answer_queue)
+        task = await run_sa(task, bot, chat_id)
+        task = await run_qatc(task, bot, chat_id)
         task = await run_pm(task, bot, chat_id)
 
         try:
