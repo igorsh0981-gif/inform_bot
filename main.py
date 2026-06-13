@@ -100,10 +100,18 @@ async def handle_pm_text_reply(update: Update, context: ContextTypes.DEFAULT_TYP
         return
 
     text = message.text or ""
-    for task_id, queue in answer_queues.items():
-        await queue.put(text)
-        logger.info(f"[PM_REPLY] Ответ получен для задачи {task_id}: {text[:50]}")
-        break
+
+    if len(answer_queues) > 1:
+        tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
+        await message.reply_text(
+            f"⚠️ Несколько активных задач ({len(answer_queues)}): {tasks_list}\n"
+            f"Ответ направлен в последнюю активную задачу. Используйте /status для проверки."
+        )
+
+    # Направляем в последнюю задачу (LIFO — последняя добавленная активнее)
+    target_id = list(answer_queues.keys())[-1]
+    await answer_queues[target_id].put(text)
+    logger.info(f"[PM_REPLY] Ответ для задачи {target_id}: {text[:50]}")
 
 
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -118,9 +126,9 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
     if not data.startswith("ba_opt:"):
         return
 
+    # Формат: ba_opt:{task_id}:{index} или ba_opt:__ (свой ответ)
     value = data[len("ba_opt:"):]
 
-    # "__ " = пользователь хочет ввести текст сам
     if value == "__":
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
@@ -129,22 +137,26 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return
 
-    # Восстанавливаем полный текст варианта из кэша по индексу
-    display_value = value  # fallback
-    if value.isdigit():
-        idx = int(value)
-        # Ищем кэш для активной задачи
-        for task_id in answer_queues:
-            opts = ba_options_cache.get(task_id, [])
-            if idx < len(opts):
-                display_value = opts[idx]
-            break
+    # Разбираем task_id:index
+    parts = value.split(":", 1)
+    if len(parts) == 2:
+        cb_task_id, cb_idx = parts[0], parts[1]
+    else:
+        # Обратная совместимость — старый формат без task_id
+        cb_task_id = next(iter(answer_queues), None)
+        cb_idx = value
 
-    if answer_queues:
-        for task_id, queue in answer_queues.items():
-            await queue.put(display_value)
-            logger.info(f"[CALLBACK] Вариант выбран для {task_id}: {display_value[:50]}")
-            break
+    display_value = cb_idx  # fallback
+    if cb_idx.isdigit():
+        idx = int(cb_idx)
+        opts = ba_options_cache.get(cb_task_id, [])
+        if idx < len(opts):
+            display_value = opts[idx]
+
+    queue = answer_queues.get(cb_task_id)
+    if queue:
+        await queue.put(display_value)
+        logger.info(f"[CALLBACK] Вариант для задачи {cb_task_id}: {display_value[:50]}")
         await query.edit_message_reply_markup(reply_markup=None)
         await context.bot.send_message(
             chat_id=query.message.chat.id,
@@ -169,7 +181,7 @@ async def handle_feature_message(update: Update, context: ContextTypes.DEFAULT_T
     logger.info(f"Триггер | chat: {message.chat.title or 'private'} | user: {message.from_user.username}")
 
     task = Task(
-        task_id=str(message.message_id),
+        task_id=f"{message.chat.id}_{message.message_id}",
         timestamp=datetime.now(timezone.utc).isoformat(),
         raw_message=raw_text,
         author_username=f"@{message.from_user.username}" if message.from_user.username else "",
@@ -213,10 +225,16 @@ async def handle_skip(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not answer_queues:
         await message.reply_text("⚠️ Нет активных задач.")
         return
-    for task_id, queue in answer_queues.items():
-        await queue.put("[SKIP — пользователь пропустил вопрос]")
-        await message.reply_text(f"⏩ Вопрос пропущен для задачи #{task_id}")
-        break
+    task_id = list(answer_queues.keys())[-1]
+    queue = answer_queues[task_id]
+    if len(answer_queues) > 1:
+        tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
+        await message.reply_text(
+            f"⚠️ Несколько активных задач ({len(answer_queues)}): {tasks_list}\n"
+            f"Применяю к последней: #{task_id}"
+        )
+    await queue.put("[SKIP — пользователь пропустил вопрос]")
+    await message.reply_text(f"⏩ Вопрос пропущен для задачи #{task_id}")
 
 
 async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -226,10 +244,16 @@ async def handle_stop(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not answer_queues:
         await message.reply_text("⚠️ Нет активных задач.")
         return
-    for task_id, queue in answer_queues.items():
-        await queue.put("[STOP — пользователь остановил анализ]")
-        await message.reply_text(f"🛑 Анализ задачи #{task_id} остановлен.")
-        break
+    task_id = list(answer_queues.keys())[-1]
+    queue = answer_queues[task_id]
+    if len(answer_queues) > 1:
+        tasks_list = ", ".join(f"#{tid}" for tid in answer_queues)
+        await message.reply_text(
+            f"⚠️ Несколько активных задач ({len(answer_queues)}): {tasks_list}\n"
+            f"Останавливаю последнюю: #{task_id}"
+        )
+    await queue.put("[STOP — пользователь остановил анализ]")
+    await message.reply_text(f"🛑 Анализ задачи #{task_id} остановлен.")
 
 
 async def handle_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -298,6 +322,7 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
 
     finally:
         answer_queues.pop(task.task_id, None)
+        ba_options_cache.pop(task.task_id, None)
 
 
 def main() -> None:
@@ -336,7 +361,7 @@ def main() -> None:
     if RAILWAY_DOMAIN:
         # ── WEBHOOK режим (Railway production) ────────────────────────────────
         webhook_url = f"https://{RAILWAY_DOMAIN}{WEBHOOK_PATH}"
-        logger.info(f"Режим: WEBHOOK → {webhook_url}")
+        logger.info(f"Режим: WEBHOOK → https://{RAILWAY_DOMAIN}/webhook/***")
         app.run_webhook(
             listen="0.0.0.0",
             port=PORT,
