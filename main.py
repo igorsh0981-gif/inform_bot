@@ -36,7 +36,6 @@ from agents.sa_agent import run_sa
 from agents.qatc_agent import run_qatc
 from agents.pm_agent import run_pm
 from agents.tz_biz_agent import run_tz_biz
-from agents.tz_sys_agent import run_tz_sys
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -266,15 +265,15 @@ async def run_chain(task: Task, bot, answer_queue: asyncio.Queue) -> None:
             logger.warning("[CHAIN] Notion страница не создана")
 
         task = await run_ba(task, bot, chat_id, answer_queue, ba_options_cache)
-        task = await run_sa(task, bot, chat_id)
-        task = await run_qatc(task, bot, chat_id)
+        task = await run_sa(task, bot, chat_id, answer_queue)
+        task = await run_qatc(task, bot, chat_id, answer_queue)
         task = await run_pm(task, bot, chat_id)
 
-        tz_results = await asyncio.gather(
-            run_tz_biz(task), run_tz_sys(task), return_exceptions=True,
-        )
-        task.pm_template_1 = tz_results[0] if not isinstance(tz_results[0], Exception) else ""
-        task.pm_template_2 = tz_results[1] if not isinstance(tz_results[1], Exception) else ""
+        try:
+            task.pm_template_1 = await run_tz_biz(task)
+        except Exception as e:
+            logger.error(f"TZ_BIZ ошибка: {e}")
+            task.pm_template_1 = ""
 
         await notify_packing(bot, chat_id)
         if folder_id:
