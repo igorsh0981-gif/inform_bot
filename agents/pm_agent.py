@@ -125,7 +125,7 @@ async def run_pm(task: Task, bot, notify_chat_id: int) -> Task:
     )
 
     try:
-        response = await call_claude(PM_SYSTEM, user_text, max_tokens=8192, timeout=180)
+        response = await call_claude(PM_SYSTEM, user_text, max_tokens=16000, timeout=240)
 
         # Парсим JSON ответ — агрессивная очистка
         clean = response.strip()
