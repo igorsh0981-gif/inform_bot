@@ -122,7 +122,7 @@ async def upload_all_artifacts(task) -> bool:
         "pm_jira": task.pm_jira, "pm_epics": task.pm_epics,
         "pm_risks": task.pm_risks, "pm_raci": task.pm_raci,
         "pm_team": task.pm_team, "pm_template_1": task.pm_template_1,
-        "pm_template_2": task.pm_template_2, "pm_projekt_csv": task.pm_projekt_csv,
+        "pm_projekt_csv": task.pm_projekt_csv,
     }
     empty = [k for k, v in fields.items() if not v]
     if empty:
