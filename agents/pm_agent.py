@@ -118,24 +118,23 @@ async def run_pm(task: Task, bot, notify_chat_id: int) -> Task:
     logger.info(f"PM старт | задача: {task.feature_name}")
 
     user_text = (
-        f"## Задача: {task.feature_name}\\n"
-        f"## BA Артефакт:\\n{task.ba_text}\\n\\n"
-        f"## SA Артефакт:\\n{task.sa_text}\\n\\n"
-        f"## QATC Артефакт:\\n{task.qatc_text}"
+        f"## Задача: {task.feature_name}\n"
+        f"## BA Артефакт:\n{task.ba_text}\n\n"
+        f"## SA Артефакт:\n{task.sa_text}\n\n"
+        f"## QATC Артефакт:\n{task.qatc_text}"
     )
 
     try:
         response = await call_claude(PM_SYSTEM, user_text, max_tokens=8192, timeout=180)
 
         # Парсим JSON ответ — агрессивная очистка
-        import re as _re
         clean = response.strip()
-        clean = _re.sub(r"^```(?:json)?\s*", "", clean)
-        clean = _re.sub(r"\s*```$", "", clean)
+        clean = re.sub(r"^```(?:json)?\s*", "", clean)
+        clean = re.sub(r"\s*```$", "", clean)
         clean = clean.strip()
         
         # Ищем JSON объект если окружён текстом
-        json_match = _re.search(r"\{.*\}", clean, _re.DOTALL)
+        json_match = re.search(r"\{.*\}", clean, re.DOTALL)
         if json_match:
             clean = json_match.group()
         
