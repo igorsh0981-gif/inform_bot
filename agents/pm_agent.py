@@ -127,8 +127,18 @@ async def run_pm(task: Task, bot, notify_chat_id: int) -> Task:
     try:
         response = await call_claude(PM_SYSTEM, user_text, max_tokens=8192, timeout=180)
 
-        # Парсим JSON ответ
-        clean = response.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        # Парсим JSON ответ — агрессивная очистка
+        import re as _re
+        clean = response.strip()
+        clean = _re.sub(r"^```(?:json)?\s*", "", clean)
+        clean = _re.sub(r"\s*```$", "", clean)
+        clean = clean.strip()
+        
+        # Ищем JSON объект если окружён текстом
+        json_match = _re.search(r"\{.*\}", clean, _re.DOTALL)
+        if json_match:
+            clean = json_match.group()
+        
         data = json.loads(clean)
 
         task.pm_summary = data.get("summary", "")
@@ -138,6 +148,11 @@ async def run_pm(task: Task, bot, notify_chat_id: int) -> Task:
         task.pm_risks = data.get("risks", "")
         task.pm_raci = data.get("raci", "")
         task.pm_team = data.get("team", "")
+        
+        # Логируем пустые поля
+        empty = [k for k in ["protocol","jira","epics","risks","raci","team"] if not data.get(k)]
+        if empty:
+            logger.warning(f"PM пустые поля в JSON: {empty}")
 
         # Генерируем CSV и XLSX из projekt_tasks
         projekt_tasks = data.get("projekt_tasks", [])
