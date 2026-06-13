@@ -1,3 +1,4 @@
+import asyncio
 """
 QATC Agent — QA Test Cases (профессиональная версия)
 Минимум 20 тест-кейсов, структурированный формат, ревью качества.
@@ -6,6 +7,7 @@ QATC Agent — QA Test Cases (профессиональная версия)
 import logging
 import re
 from models.task import Task
+from services.utils import extract_summary
 from services.claude_client import call_claude
 from services.notifier import notify_qatc_done
 
@@ -130,7 +132,7 @@ async def _ask_agent(question: str, target: str, task: Task) -> str:
         return "[ASSUMED] Используй стандартную практику"
 
 
-async def run_qatc(task: Task, bot, notify_chat_id: int) -> Task:
+async def run_qatc(task: Task, bot, notify_chat_id: int, answer_queue=None) -> Task:
     logger.info(f"QATC старт | {task.feature_name}")
 
     base_text = (
@@ -149,6 +151,16 @@ async def run_qatc(task: Task, bot, notify_chat_id: int) -> Task:
             user_text += "\n\n## Уточнения от SA/BA:\n" + "\n\n".join(clarifications)
         if round_num > 1:
             user_text += "\n\n[ИНСТРУКЦИЯ: Финальный прогон. Вопросов не задавай.]"
+
+        # Проверяем STOP
+        if answer_queue:
+            try:
+                msg = answer_queue.get_nowait()
+                if "[STOP" in msg:
+                    raise InterruptedError("Пользователь остановил анализ")
+                answer_queue.put_nowait(msg)
+            except asyncio.QueueEmpty:
+                pass  # очередь пуста — продолжаем
 
         try:
             response = await call_claude(QATC_SYSTEM, user_text, max_tokens=8192)
@@ -170,13 +182,7 @@ async def run_qatc(task: Task, bot, notify_chat_id: int) -> Task:
     artifact = _clean_qatc_artifact(response)
 
     task.qatc_text = artifact
-    task.qatc_summary = _extract_summary(artifact)
+    task.qatc_summary = extract_summary(artifact)
     await bot.send_message(notify_chat_id, "✅ QATC завершён")
     await notify_qatc_done(bot, notify_chat_id, task.qatc_summary)
     return task
-
-
-def _extract_summary(text: str) -> str:
-    lines = [l.strip() for l in text.split("\n") if l.strip() and not l.startswith("#")]
-    summary = " ".join(lines[:3])
-    return summary[:200] + "..." if len(summary) > 200 else summary
